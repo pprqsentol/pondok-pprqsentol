@@ -223,6 +223,7 @@ const NAV_ADMIN = [
   {id:'laporan', label:'Laporan', icon:'&#128202;'},
   {id:'rapor', label:'Rapor', icon:'&#127891;'},
   {id:'laporanToko', label:'Laporan Toko', icon:'&#128176;'},
+  {id:'tagihan', label:'Tagihan', icon:'&#128179;'},
   {id:'pembina', label:'Pembina', icon:'&#128100;'},
   {id:'kelola', label:'Kelola', icon:'&#9881;'}
 ];
@@ -344,6 +345,7 @@ function goPage(p){
   if(p==='laporan') renderLaporanPage();
   if(p==='rapor') renderRaporPage();
   if(p==='laporanToko') renderKasPage();
+  if(p==='tagihan') renderTagihanPage();
   if(p==='pembina') renderPembinaPage();
   if(p==='kelola') renderKelolaPage();
 }
@@ -963,8 +965,8 @@ function renderLaporanHafalan(santri){
       </table>
     </div>
     <div class="card">
-      <div class="card-title">Grafik tren (total halaman kumulatif)</div>
-      <canvas id="chartHafalan" width="600" height="220" style="width:100%;height:180px"></canvas>
+      <div class="card-title">Grafik tren hafalan (total halaman kumulatif)</div>
+      <div id="chartHafalanWrap"></div>
     </div>
   `;
   drawTrendChart(rows);
@@ -1000,40 +1002,78 @@ function printHafalanTable(){
     <div class="btn-row"><button class="btn btn-accent" onclick="window.print()">Cetak</button></div>
   `);
 }
+/* Ubah deretan titik [x,y] jadi path SVG kurva halus (Catmull-Rom -> Bezier),
+   supaya garis tren tidak patah-patah seperti garis lurus biasa. */
+function smoothPathD(pts){
+  if(pts.length<2) return '';
+  if(pts.length===2) return `M${pts[0][0]},${pts[0][1]} L${pts[1][0]},${pts[1][1]}`;
+  let d = `M${pts[0][0]},${pts[0][1]}`;
+  for(let i=0;i<pts.length-1;i++){
+    const p0 = pts[i-1] || pts[i];
+    const p1 = pts[i];
+    const p2 = pts[i+1];
+    const p3 = pts[i+2] || p2;
+    const cp1x = p1[0] + (p2[0]-p0[0])/6, cp1y = p1[1] + (p2[1]-p0[1])/6;
+    const cp2x = p2[0] - (p3[0]-p1[0])/6, cp2y = p2[1] - (p3[1]-p1[1])/6;
+    d += ` C${cp1x.toFixed(1)},${cp1y.toFixed(1)} ${cp2x.toFixed(1)},${cp2y.toFixed(1)} ${p2[0]},${p2[1]}`;
+  }
+  return d;
+}
+function fmtTglSingkat(t){
+  const d = new Date(t);
+  return d.toLocaleDateString('id-ID', {day:'2-digit', month:'short'});
+}
 function drawTrendChart(rows){
-  const canvas = document.getElementById('chartHafalan');
-  const ctx = canvas.getContext('2d');
-  const W = canvas.width, H = canvas.height, pad=30;
-  ctx.clearRect(0,0,W,H);
-  const colors = ['#3b5940','#c0392b','#d19a24','#2f7d9d','#8a4baf','#555'];
-  let allSeries = rows.map(r=>{
+  const wrap = document.getElementById('chartHafalanWrap');
+  if(!wrap) return;
+  const colors = ['#3b5940','#c0392b','#d19a24','#2f7d9d','#8a4baf','#c2669b'];
+  const allSeries = rows.map(r=>{
     let cum = 0;
     return r.items.map(h=>{ cum += (h.jumlahHalaman||1); return {t:h.tanggal, v:cum}; });
   });
   const maxV = Math.max(1, ...allSeries.flat().map(p=>p.v));
   const allDates = [...new Set(allSeries.flat().map(p=>p.t))].sort();
-  if(allDates.length<2){ ctx.fillStyle='#888'; ctx.font='13px sans-serif'; ctx.fillText('Belum cukup data untuk grafik tren.', 10, H/2); return; }
-  ctx.strokeStyle='#ddd'; ctx.beginPath(); ctx.moveTo(pad,H-pad); ctx.lineTo(W-10,H-pad); ctx.stroke();
+  if(allDates.length<2){
+    wrap.innerHTML = `<div style="text-align:center;padding:34px 10px;color:#999;font-size:13px;background:#f7f7f4;border-radius:10px">Belum cukup data untuk menampilkan grafik tren pada periode ini.</div>`;
+    return;
+  }
+  const W = 640, H = 260, padL = 40, padR = 14, padT = 16, padB = 30;
+  const innerW = W-padL-padR, innerH = H-padT-padB;
+  const xFor = t => padL + (allDates.indexOf(t)/((allDates.length-1)||1)) * innerW;
+  const yFor = v => padT + innerH - (v/maxV) * innerH;
+  const steps = 4;
+  let svg = `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;display:block;background:#fbfbf8;border-radius:12px" xmlns="http://www.w3.org/2000/svg">`;
+  for(let i=0;i<=steps;i++){
+    const v = Math.round(maxV*i/steps);
+    const y = yFor(v);
+    svg += `<line x1="${padL}" y1="${y.toFixed(1)}" x2="${W-padR}" y2="${y.toFixed(1)}" stroke="#e8e8e3" stroke-width="1"/>`;
+    svg += `<text x="${padL-8}" y="${(y+3.5).toFixed(1)}" font-size="10" fill="#999" text-anchor="end">${v}</text>`;
+  }
+  svg += `<line x1="${padL}" y1="${(padT+innerH).toFixed(1)}" x2="${W-padR}" y2="${(padT+innerH).toFixed(1)}" stroke="#ccc" stroke-width="1.2"/>`;
+  [0, Math.floor((allDates.length-1)/2), allDates.length-1].forEach(idx=>{
+    const t = allDates[idx];
+    svg += `<text x="${xFor(t).toFixed(1)}" y="${H-8}" font-size="10" fill="#999" text-anchor="middle">${fmtTglSingkat(t)}</text>`;
+  });
   rows.forEach((r,idx)=>{
     const series = allSeries[idx];
     if(series.length<1) return;
-    ctx.strokeStyle = colors[idx%colors.length];
-    ctx.beginPath();
-    series.forEach((p,i)=>{
-      const x = pad + (allDates.indexOf(p.t)/(allDates.length-1||1)) * (W-pad-20);
-      const y = H-pad - (p.v/maxV) * (H-pad-20);
-      if(i===0) ctx.moveTo(x,y); else ctx.lineTo(x,y);
-    });
-    ctx.stroke();
+    const color = colors[idx%colors.length];
+    const pts = series.map(p=>[+xFor(p.t).toFixed(1), +yFor(p.v).toFixed(1)]);
+    if(pts.length===1){
+      svg += `<circle cx="${pts[0][0]}" cy="${pts[0][1]}" r="4" fill="${color}"><title>${escapeHtml(r.s.nama)}: ${series[0].v} halaman (${series[0].t})</title></circle>`;
+    } else {
+      svg += `<path d="${smoothPathD(pts)}" fill="none" stroke="${color}" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>`;
+      pts.forEach((p,i)=>{
+        svg += `<circle cx="${p[0]}" cy="${p[1]}" r="3" fill="#fff" stroke="${color}" stroke-width="2"><title>${escapeHtml(r.s.nama)}: ${series[i].v} halaman (${series[i].t})</title></circle>`;
+      });
+    }
   });
-  let lx = pad;
-  rows.forEach((r,idx)=>{
-    ctx.fillStyle = colors[idx%colors.length];
-    ctx.fillRect(lx, 6, 8, 8);
-    ctx.fillStyle='#555'; ctx.font='10px sans-serif';
-    ctx.fillText(r.s.nama, lx+11, 14);
-    lx += ctx.measureText(r.s.nama).width + 30;
-  });
+  svg += `</svg>`;
+  const legend = rows.map((r,idx)=>`
+    <span style="display:inline-flex;align-items:center;gap:5px;font-size:11px;color:#555;margin:4px 12px 0 0">
+      <span style="width:9px;height:9px;border-radius:50%;background:${colors[idx%colors.length]};display:inline-block;flex:none"></span>${escapeHtml(r.s.nama)}
+    </span>`).join('');
+  wrap.innerHTML = svg + `<div style="margin-top:6px;display:flex;flex-wrap:wrap">${legend}</div>`;
 }
 let tidakHadirPeriode = 'hari';
 function tidakHadirRange(periode){
@@ -1082,6 +1122,14 @@ function renderDaftarTidakHadir(){
     </div>
   `;
 }
+/* Warna latar & teks kartu persentase kehadiran, berdasarkan ambang predikat
+   yang sama dipakai di seluruh aplikasi (>=90 Sangat baik ... <50 Perlu perhatian). */
+function pctAbsensiStyle(pct){
+  if(pct>=90) return {bg:'#dcefe1', fg:'#1f5c37'};
+  if(pct>=75) return {bg:'#eaf5ec', fg:'#2f6b47'};
+  if(pct>=50) return {bg:'#fdf1da', fg:'#8a5a13'};
+  return {bg:'#fbe0dc', fg:'#c0392b'};
+}
 function renderLaporanAbsensi(santri){
   const rows = santri.map(s=>{
     const items = DB.absensi.filter(a=>a.santriId===s.id && a.tanggal>=lapFrom && a.tanggal<=lapTo);
@@ -1089,50 +1137,31 @@ function renderLaporanAbsensi(santri){
     const pct = items.length ? Math.round(hadir/items.length*100) : 0;
     let predikat = pct>=90?'Sangat baik':pct>=75?'Baik':pct>=50?'Cukup':'Perlu perhatian';
     return {s, total:items.length, hadir, pct, predikat};
-  });
+  }).sort((a,b)=>b.pct-a.pct);
   const rataRata = rows.length ? Math.round(rows.reduce((sum,r)=>sum+r.pct,0)/rows.length) : 0;
+  const rataStyle = pctAbsensiStyle(rataRata);
   document.getElementById('lapBody').innerHTML = `
-    <div class="card">
-      <div class="card-title">Rata-rata kehadiran seluruh santri (semua kegiatan, periode terpilih)</div>
-      <div class="stat"><div class="num">${rataRata}%</div><div class="label">Rata-rata kehadiran ${rows.length} santri</div></div>
-      <canvas id="chartRataAbsensi" width="600" height="180" style="width:100%;height:150px;margin-top:10px"></canvas>
+    <div class="card" style="text-align:center;background:${rataStyle.bg};border-radius:14px">
+      <div style="font-size:12px;font-weight:700;letter-spacing:.3px;color:${rataStyle.fg};opacity:.85">RATA-RATA KEHADIRAN &middot; ${rows.length} SANTRI</div>
+      <div style="font-size:46px;font-weight:800;color:${rataStyle.fg};margin-top:2px">${rataRata}%</div>
     </div>
     <div class="card">
-      <div class="card-title">Skor kehadiran per santri (periode terpilih)</div>
-      <table><tr><th>Santri</th><th>Hadir</th><th>Total dicatat</th><th>%</th><th>Predikat</th></tr>
-      ${rows.map(r=>`<tr><td>${escapeHtml(r.s.nama)}</td><td>${r.hadir}</td><td>${r.total}</td><td>${r.pct}%</td><td>${r.predikat}</td></tr>`).join('')}
-      </table>
+      <div class="card-title">Persentase kehadiran per santri (periode terpilih)</div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(132px,1fr));gap:10px;margin-top:8px">
+        ${rows.length===0 ? '<p class="muted">Belum ada data.</p>' : rows.map(r=>{
+          const st = pctAbsensiStyle(r.pct);
+          return `
+          <div style="background:${st.bg};border-radius:12px;padding:14px 8px;text-align:center">
+            <div style="font-size:12px;font-weight:600;color:${st.fg};white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${escapeHtml(r.s.nama)}">${escapeHtml(r.s.nama)}</div>
+            <div style="font-size:28px;font-weight:800;color:${st.fg};margin-top:2px">${r.pct}%</div>
+            <div style="font-size:11px;color:${st.fg};opacity:.8;margin-top:2px">${r.hadir}/${r.total} hadir</div>
+            <div style="font-size:10px;color:${st.fg};opacity:.7">${r.predikat}</div>
+          </div>`;
+        }).join('')}
+      </div>
     </div>
     ${renderDaftarTidakHadir()}
   `;
-  drawAverageBarChart(rows, rataRata);
-}
-function drawAverageBarChart(rows, rataRata){
-  const canvas = document.getElementById('chartRataAbsensi');
-  if(!canvas) return;
-  const ctx = canvas.getContext('2d');
-  const W = canvas.width, H = canvas.height, padL=30, padB=50;
-  ctx.clearRect(0,0,W,H);
-  if(rows.length===0){ ctx.fillStyle='#888'; ctx.font='13px sans-serif'; ctx.fillText('Belum ada data.', 10, H/2); return; }
-  const barW = Math.max(14, (W-padL-10) / rows.length - 6);
-  ctx.strokeStyle='#ddd'; ctx.beginPath(); ctx.moveTo(padL,H-padB); ctx.lineTo(W-10,H-padB); ctx.stroke();
-  rows.forEach((r,i)=>{
-    const x = padL + i*(barW+6);
-    const h = (r.pct/100) * (H-padB-15);
-    ctx.fillStyle = r.pct>=75 ? '#3b5940' : (r.pct>=50 ? '#d19a24' : '#c0392b');
-    ctx.fillRect(x, H-padB-h, barW, h);
-    ctx.save();
-    ctx.translate(x+barW/2, H-padB+4);
-    ctx.rotate(Math.PI/4);
-    ctx.fillStyle='#555'; ctx.font='9px sans-serif'; ctx.textAlign='left';
-    ctx.fillText(r.s.nama.split(' ')[0], 0, 0);
-    ctx.restore();
-  });
-  const yAvg = H-padB - (rataRata/100)*(H-padB-15);
-  ctx.strokeStyle='#c0392b'; ctx.setLineDash([4,3]);
-  ctx.beginPath(); ctx.moveTo(padL, yAvg); ctx.lineTo(W-10, yAvg); ctx.stroke();
-  ctx.setLineDash([]);
-  ctx.fillStyle='#c0392b'; ctx.font='10px sans-serif'; ctx.fillText('Rata-rata: '+rataRata+'%', padL+4, yAvg-4);
 }
 
 /* ---------- LAPORAN TOKO: sub-tab KAS & LABA ======
@@ -1377,6 +1406,128 @@ async function saveKasAwal(lokasi){
   if(error){ alert('Gagal menyimpan: ' + error.message); return; }
   closeModal();
   renderKasBody();
+}
+
+/* ---------- TAGIHAN (dari data Aplikasi Keuangan) ------------------------
+   Menampilkan tagihan (SPP/cicilan, dari tabel tagihan+jenis_tagihan) dan
+   iuran/sosial (dari tabel iuran+iuran_detail) berikut nama-nama santri
+   yang belum bayar. Data hanya ditampilkan (baca saja) di aplikasi pondok;
+   pembayaran tetap dicatat lewat Aplikasi Keuangan. --------------------- */
+let tagihanSubTab = 'tagihan'; // 'tagihan' | 'iuran'
+let TAGIHAN_DATA = null;
+const NAMA_BULAN = ['Januari','Februari','Maret','April','Mei','Juni','Juli','Agustus','September','Oktober','November','Desember'];
+
+async function loadTagihanData(){
+  try {
+    const [tagihanRes, jenisRes, iuranRes, iuranDetailRes] = await Promise.all([
+      sb.from('tagihan').select('*'),
+      sb.from('jenis_tagihan').select('*'),
+      sb.from('iuran').select('*'),
+      sb.from('iuran_detail').select('*')
+    ]);
+    if(tagihanRes.error) throw tagihanRes.error;
+    if(jenisRes.error) throw jenisRes.error;
+    if(iuranRes.error) throw iuranRes.error;
+    if(iuranDetailRes.error) throw iuranDetailRes.error;
+    TAGIHAN_DATA = {
+      tagihan: tagihanRes.data || [],
+      jenis: jenisRes.data || [],
+      iuran: iuranRes.data || [],
+      iuranDetail: iuranDetailRes.data || []
+    };
+  } catch(e){
+    console.error('Gagal memuat data tagihan:', e);
+    TAGIHAN_DATA = 'error';
+  }
+}
+function namaJenisTagihan(id){
+  const j = TAGIHAN_DATA.jenis.find(x=>x.id===id);
+  return j ? j.nama : 'Tagihan';
+}
+function namaSantriById(id){
+  const s = DB.santri.find(x=>x.id===id);
+  return s ? s.nama : '(santri tidak aktif/tidak ditemukan)';
+}
+function bulanLabel(bulan){
+  if(!bulan) return '-';
+  const [y,m] = bulan.split('-');
+  return `${NAMA_BULAN[Number(m)-1]||m} ${y}`;
+}
+/* Gabungkan tagihan per jenis+bulan, supaya tampak "SPP - Agustus 2026"
+   sebagai satu kelompok berikut siapa saja yang belum bayar. */
+function groupTagihan(){
+  const groups = {};
+  TAGIHAN_DATA.tagihan.forEach(t=>{
+    const key = t.jenis_tagihan_id + '|' + t.bulan;
+    if(!groups[key]) groups[key] = { jenisId: t.jenis_tagihan_id, bulan: t.bulan, items: [] };
+    groups[key].items.push(t);
+  });
+  return Object.values(groups).sort((a,b)=> String(b.bulan).localeCompare(String(a.bulan)));
+}
+function renderTagihanPage(){
+  document.getElementById('content').innerHTML = `
+    <h2>Tagihan</h2>
+    <p class="muted">Data tagihan &amp; iuran ditarik dari Aplikasi Keuangan (baca saja). Pembayaran dicatat lewat Aplikasi Keuangan.</p>
+    <div class="tabs">
+      <button class="tab ${tagihanSubTab==='tagihan'?'active':''}" onclick="tagihanSubTab='tagihan'; renderTagihanPage()">Tagihan</button>
+      <button class="tab ${tagihanSubTab==='iuran'?'active':''}" onclick="tagihanSubTab='iuran'; renderTagihanPage()">Iuran</button>
+    </div>
+    <div id="tagihanBody"><p class="muted">Memuat data...</p></div>
+  `;
+  renderTagihanBody();
+}
+async function renderTagihanBody(){
+  await loadTagihanData();
+  const body = document.getElementById('tagihanBody');
+  if(!body) return; // pengguna sudah pindah halaman sebelum data selesai dimuat
+  if(TAGIHAN_DATA==='error'){
+    body.innerHTML = `<p class="muted" style="color:var(--danger)">Gagal memuat data. Periksa koneksi internet.</p><button class="btn" onclick="renderTagihanBody()">Muat Ulang</button>`;
+    return;
+  }
+  if(tagihanSubTab==='iuran') renderIuranBody(body); else renderTagihanBodyTagihan(body);
+}
+function renderTagihanBodyTagihan(body){
+  const groups = groupTagihan();
+  if(groups.length===0){ body.innerHTML = '<div class="card"><p class="muted">Belum ada data tagihan.</p></div>'; return; }
+  body.innerHTML = groups.map(g=>{
+    const belum = g.items.filter(t=>t.status==='belum').sort((a,b)=>namaSantriById(a.santri_id).localeCompare(namaSantriById(b.santri_id)));
+    const lunas = g.items.filter(t=>t.status==='lunas');
+    return `
+      <div class="card" style="margin-top:12px">
+        <div class="row"><div class="card-title" style="margin-bottom:0">${escapeHtml(namaJenisTagihan(g.jenisId))} &middot; ${bulanLabel(g.bulan)}</div>
+          <span style="font-size:12px;font-weight:600;color:${belum.length?'var(--danger)':'var(--green-700)'}">${belum.length} belum bayar</span></div>
+        <p class="muted" style="margin:4px 0">${lunas.length} dari ${g.items.length} santri sudah lunas.</p>
+        ${belum.length===0 ? '<p class="muted">Semua sudah bayar. &#127881;</p>' : `
+          <div class="card-title" style="margin-top:8px;font-size:13px">Belum bayar:</div>
+          <ul style="margin:4px 0 0 18px;padding:0">
+            ${belum.map(t=>`<li>${escapeHtml(namaSantriById(t.santri_id))} &mdash; ${formatRupiah(t.jumlah)}${t.jatuh_tempo?` <span class="muted">(jatuh tempo ${t.jatuh_tempo})</span>`:''}</li>`).join('')}
+          </ul>
+        `}
+      </div>
+    `;
+  }).join('');
+}
+function renderIuranBody(body){
+  const list = TAGIHAN_DATA.iuran.slice().sort((a,b)=> String(b.tanggal||'').localeCompare(String(a.tanggal||'')));
+  if(list.length===0){ body.innerHTML = '<div class="card"><p class="muted">Belum ada data iuran.</p></div>'; return; }
+  body.innerHTML = list.map(it=>{
+    const items = TAGIHAN_DATA.iuranDetail.filter(d=>d.iuran_id===it.id);
+    const belum = items.filter(d=>d.status==='belum').sort((a,b)=>namaSantriById(a.santri_id).localeCompare(namaSantriById(b.santri_id)));
+    const lunas = items.filter(d=>d.status==='lunas');
+    return `
+      <div class="card" style="margin-top:12px">
+        <div class="row"><div class="card-title" style="margin-bottom:0">${escapeHtml(it.keterangan)||'Iuran'}</div>
+          <span style="font-size:12px;font-weight:600;color:${belum.length?'var(--danger)':'var(--green-700)'}">${belum.length} belum bayar</span></div>
+        <p class="muted" style="margin:4px 0">${it.tanggal||''} &middot; ${lunas.length} dari ${items.length} santri sudah lunas.</p>
+        ${belum.length===0 ? '<p class="muted">Semua sudah bayar. &#127881;</p>' : `
+          <div class="card-title" style="margin-top:8px;font-size:13px">Belum bayar:</div>
+          <ul style="margin:4px 0 0 18px;padding:0">
+            ${belum.map(d=>`<li>${escapeHtml(namaSantriById(d.santri_id))} &mdash; ${formatRupiah(d.jumlah)}</li>`).join('')}
+          </ul>
+        `}
+      </div>
+    `;
+  }).join('');
 }
 
 /* ---------- RAPOR ---------- */

@@ -1,4 +1,4 @@
-const CACHE = 'pondok-rq-v9-supabase';
+const CACHE = 'pondok-rq-v10-tagihan';
 const FILES = [
   './',
   './index.html',
