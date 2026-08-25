@@ -553,6 +553,10 @@ async function saveSantri(id, isNew){
     await loadAll(); closeModal(); renderSantriPage();
   }
 }
+/* Buat kode wali acak 6 digit angka, dipakai untuk login Aplikasi Wali Santri. */
+function buatKodeLoginBaru(){
+  return String(Math.floor(100000 + Math.random()*900000));
+}
 /* Untuk data santri lama (dibuat sebelum fitur kode wali ada) yang belum punya kode wali. */
 async function buatKodeWaliSantriLama(id){
   for(let i=0;i<5;i++){
