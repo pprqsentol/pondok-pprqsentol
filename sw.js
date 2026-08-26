@@ -1,4 +1,4 @@
-const CACHE = 'pondok-rq-v11-kas';
+const CACHE = 'pondok-rq-v14-kas';
 const FILES = [
   './',
   './index.html',

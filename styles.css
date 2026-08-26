@@ -4,7 +4,8 @@
   --danger:#a33; --radius:12px; --topbar-h:54px;
 }
 *{box-sizing:border-box;}
-body{margin:0;font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif;background:var(--bg);color:var(--text);}
+html,body{height:100%;margin:0;}
+body{font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif;background:var(--bg);color:var(--text);overscroll-behavior:none;}
 .screen{min-height:100vh;}
 h1,h2,h3{font-weight:600;margin:0 0 4px;}
 .muted{color:var(--muted);font-size:13px;}
@@ -19,18 +20,32 @@ button{cursor:pointer;font-family:inherit;}
 .btn-primary{width:100%;margin-top:20px;padding:12px;border:none;border-radius:8px;background:var(--green-600);color:#fff;font-size:15px;font-weight:600;}
 .btn-primary:active{background:var(--green-700);}
 
+/* App shell: #app sendiri yang jadi kotak setinggi layar (bukan halaman/body
+   yang discroll). Di dalamnya cuma .content yang boleh scroll -- topbar,
+   sidebar, dan bottomnav ada di LUAR area scroll itu, jadi diam total dan
+   tidak mungkin ikut tergeser walau orientasi berubah atau address bar HP
+   muncul/hilang (masalah lama terutama di landscape). */
+#app.screen{
+  height:100vh; height:100dvh;
+  min-height:0;
+  display:flex; flex-direction:column;
+  overflow:hidden;
+}
+
 /* Top bar */
-.topbar{display:flex;align-items:center;gap:10px;padding:10px 14px;background:var(--card);border-bottom:1px solid var(--border);position:sticky;top:0;z-index:10;}
+.topbar{display:flex;align-items:center;gap:10px;padding:10px 14px;background:var(--card);border-bottom:1px solid var(--border);flex-shrink:0;z-index:10;}
 .topbar-logo{width:32px;height:32px;border-radius:50%;object-fit:cover;}
 .topbar-title{font-weight:600;font-size:15px;}
 .topbar-sub{font-size:12px;color:var(--muted);}
 
-.layout{display:flex;min-height:calc(100vh - 53px);}
+.layout{display:flex;flex:1;min-height:0;}
 .sidebar{display:none;}
-.content{flex:1;padding:14px;padding-bottom:80px;max-width:960px;margin:0 auto;width:100%;}
+.content{flex:1;min-height:0;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:14px;max-width:960px;margin:0 auto;width:100%;}
 
-/* Bottom nav (mobile) */
-.bottomnav{position:fixed;bottom:0;left:0;right:0;background:var(--card);border-top:1px solid var(--border);display:flex;z-index:10;overflow-x:auto;}
+/* Bottom nav (mobile) -- bagian tetap dari kerangka aplikasi (flex item),
+   BUKAN "fixed" yang menempel di atas konten -- jadi selalu diam di
+   tempatnya dan tidak pernah ikut tergeser saat konten discroll. */
+.bottomnav{flex-shrink:0;background:var(--card);border-top:1px solid var(--border);display:flex;z-index:10;overflow-x:auto;padding-bottom:env(safe-area-inset-bottom);}
 .bottomnav .navitem{flex:1 0 auto;min-width:56px;display:flex;flex-direction:column;align-items:center;gap:2px;padding:8px 2px;background:none;border:none;color:var(--muted);font-size:10px;}
 .bottomnav .navitem.active{color:var(--green-600);}
 .bottomnav .navitem .ic{font-size:18px;}
@@ -40,10 +55,16 @@ button{cursor:pointer;font-family:inherit;}
 .navitem.navaction.spinning .ic{animation:navspin .7s linear infinite;display:inline-block;}
 @keyframes navspin{from{transform:rotate(0deg);}to{transform:rotate(360deg);}}
 
-/* Sidebar (desktop) */
+/* Sidebar (desktop / landscape lebar) */
 @media (min-width:800px){
   .bottomnav{display:none;}
-  .sidebar{display:flex;flex-direction:column;width:190px;background:var(--card);border-right:1px solid var(--border);padding:14px 8px;gap:2px;}
+  .sidebar{
+    display:flex;flex-direction:column;width:190px;background:var(--card);border-right:1px solid var(--border);padding:14px 8px;gap:2px;
+    /* Tinggi penuh area .layout & scroll sendiri kalau daftar tabnya
+       panjang -- tidak butuh sticky lagi karena .layout sendiri sudah
+       tidak ikut scroll (lihat #app.screen di atas). */
+    flex-shrink:0;height:100%;overflow-y:auto;
+  }
   .sidebar .navitem{display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:8px;border:none;background:none;text-align:left;color:var(--text);font-size:14px;}
   .sidebar .navitem.active{background:var(--green-100);color:var(--green-700);font-weight:600;}
   .sidebar .navitem.navaction{border-left:none;border-top:1px solid var(--border);margin-top:6px;padding-top:14px;}
@@ -51,10 +72,12 @@ button{cursor:pointer;font-family:inherit;}
 }
 
 /* Page head: judul tab (+ tab pill & bar filter di dalamnya) tetap diam di atas
-   saat konten di bawahnya di-scroll. Nempel persis di bawah topbar. */
+   saat konten di bawahnya di-scroll. Nempel di paling atas kotak scroll
+   .content (bukan lagi relatif ke topbar, karena topbar sudah di luar
+   area scroll). */
 .page-head{
   position:sticky;
-  top:var(--topbar-h);
+  top:0;
   z-index:8;
   background:var(--bg);
   margin:-14px -14px 12px;
@@ -142,6 +165,28 @@ table{width:100%;border-collapse:collapse;font-size:13px;}
 th,td{text-align:left;padding:7px 6px;border-bottom:1px solid var(--border);}
 th{color:var(--muted);font-weight:600;font-size:12px;}
 
+/* Bungkus tabel supaya kalau kolomnya kepanjangan/kebanyakan, tabel digeser
+   kanan-kiri (scroll horizontal) -- bukan kolomnya yang ikut menyempit &
+   tulisannya jadi bertumpuk/turun baris. Kolom pertama (nama/label) dibuat
+   "nempel" di kiri (sticky) supaya tetap kebaca sambil menggeser kolom lain. */
+.table-wrap{
+  overflow-x:auto;
+  -webkit-overflow-scrolling:touch;
+  border-radius:8px;
+  margin:0 -1px;
+}
+.table-wrap table{white-space:nowrap;}
+.table-wrap th:first-child,.table-wrap td:first-child{
+  position:sticky;
+  left:0;
+  background:var(--card);
+  box-shadow:2px 0 5px -3px rgba(0,0,0,0.15);
+}
+@media print{
+  .table-wrap{overflow-x:visible;}
+  .table-wrap th:first-child,.table-wrap td:first-child{position:static;box-shadow:none;}
+}
+
 /* Modal */
 .modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.45);display:flex;align-items:flex-end;justify-content:center;z-index:100;}
 @media (min-width:640px){.modal-overlay{align-items:center;}}
@@ -151,18 +196,19 @@ th{color:var(--muted);font-weight:600;font-size:12px;}
 .modal-close{background:none;border:none;font-size:20px;color:var(--muted);}
 
 /* Printable card */
-.id-card{width:360px;height:220px;border-radius:16px;background:linear-gradient(135deg,#eef4ee,#dbe8dd);border:1px solid var(--border);padding:0;position:relative;overflow:hidden;margin:0 auto;box-shadow:0 4px 16px rgba(31,51,39,0.12);}
-.id-card::before{content:"";position:absolute;top:0;left:0;right:0;height:6px;background:linear-gradient(90deg,#3b5940,#6b9b6f,#d19a24);}
-.id-card .head{display:flex;align-items:center;gap:8px;background:#1f3327;padding:8px 14px;margin-top:6px;}
-.id-card .head img{width:24px;height:24px;border-radius:50%;background:#fff;padding:2px;}
-.id-card .head .pn{font-size:10px;font-weight:700;color:#eef4ee;letter-spacing:.3px;}
-.id-card .body{display:flex;gap:10px;padding:12px 14px;align-items:stretch;}
-.id-card .left{display:flex;gap:10px;flex:1;min-width:0;}
-.id-card .photo{width:66px;height:84px;border-radius:8px;object-fit:cover;background:#ccc;flex-shrink:0;border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,0.15);}
+.id-card{width:360px;height:220px;border-radius:16px;background:linear-gradient(135deg,#eef4ee,#dbe8dd);border:1px solid var(--border);padding:0;position:relative;overflow:hidden;margin:0 auto;box-shadow:0 4px 16px rgba(31,51,39,0.12);display:flex;flex-direction:column;}
+.id-card::before{content:"";position:absolute;top:0;left:0;right:0;height:5px;background:linear-gradient(90deg,#3b5940,#6b9b6f,#d19a24);z-index:1;}
+.id-card::after{content:"";position:absolute;top:0;right:-30px;width:140px;height:140px;border-radius:50%;background:radial-gradient(circle,rgba(255,255,255,0.35),rgba(255,255,255,0));pointer-events:none;}
+.id-card .head{flex-shrink:0;display:flex;align-items:center;gap:10px;background:#1f3327;padding:10px 14px;margin-top:5px;position:relative;z-index:1;}
+.id-card .head img{width:38px;height:38px;border-radius:50%;background:#fff;padding:3px;box-shadow:0 1px 4px rgba(0,0,0,0.25);flex-shrink:0;}
+.id-card .head .pn{font-size:11px;font-weight:800;color:#eef4ee;letter-spacing:.4px;line-height:1.35;}
+.id-card .body{flex:1;display:flex;gap:12px;padding:8px 16px;align-items:center;position:relative;z-index:1;}
+.id-card .left{display:flex;gap:10px;flex:1;min-width:0;align-items:center;}
+.id-card .photo{width:68px;height:86px;border-radius:9px;object-fit:cover;background:#ccc;flex-shrink:0;border:2px solid #fff;box-shadow:0 1px 5px rgba(0,0,0,0.18);}
 .id-card .photo-placeholder{display:flex;align-items:center;justify-content:center;font-size:28px;color:#8aa38d;background:#e4ece3;}
-.id-card .info{font-size:10.5px;line-height:1.55;color:#233a2b;overflow:hidden;}
-.id-card .info .nm{font-size:14px;font-weight:800;margin-bottom:3px;color:#1f3327;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
-.id-card .qr{flex-shrink:0;width:118px;height:118px;background:#fff;padding:4px;border-radius:10px;display:flex;align-items:center;justify-content:center;box-shadow:0 1px 4px rgba(0,0,0,0.12);align-self:center;}
+.id-card .info{font-size:10.5px;line-height:1.6;color:#233a2b;overflow:hidden;}
+.id-card .info .nm{font-size:14.5px;font-weight:800;margin-bottom:3px;color:#1f3327;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.id-card .qr{flex-shrink:0;width:104px;height:104px;background:#fff;padding:5px;border-radius:10px;display:flex;align-items:center;justify-content:center;box-shadow:0 1px 5px rgba(0,0,0,0.15);border:1px solid rgba(31,51,39,0.08);}
 .id-card-wali{background:linear-gradient(135deg,#eef1f7,#dbe2ee);}
 .id-card-wali::before{background:linear-gradient(90deg,#2f5d9d,#6f93c9,#d19a24);}
 .id-card-wali .head{background:#1e3a5f;}
@@ -175,6 +221,99 @@ th{color:var(--muted);font-weight:600;font-size:12px;}
 .print-table{width:100%;border-collapse:collapse;font-size:12px;margin-top:10px;}
 .print-table th,.print-table td{border:1px solid #999;padding:5px 8px;text-align:left;}
 .print-table th{background:#e4ece3;}
+
+/* ====== Landscape (ponsel landscape maupun laptop/desktop yang layarnya
+   tidak terlalu tinggi): head dipadatkan & disusun kanan-kiri (bukan
+   atas-bawah seperti di potrait) supaya tidak menutupi tabel/daftar di
+   bawahnya -- tabel/daftar jadi dapat ruang lebih tinggi ke atas-bawah.
+   Tab & filter yang kepanjangan jadi bisa digeser kanan-kiri, bukan
+   membungkus ke bawah dan makan tempat vertikal. ====== */
+@media (orientation:landscape) and (max-height:700px){
+  .page-head{
+    display:flex;
+    flex-wrap:wrap;
+    align-items:center;
+    column-gap:14px;
+    row-gap:6px;
+    padding:8px 14px 6px;
+    margin:-14px -14px 8px;
+  }
+  .page-head h2{
+    font-size:16px;
+    margin:0;
+    flex:0 0 auto;
+    white-space:nowrap;
+  }
+  .page-head > p.muted{
+    margin:0;
+    flex:1 1 auto;
+    min-width:0;
+    white-space:nowrap;
+    overflow:hidden;
+    text-overflow:ellipsis;
+  }
+  .page-head-top{
+    flex:0 1 auto;
+    min-width:0;
+    gap:8px;
+  }
+  .page-head .tabs{
+    margin:0;
+    flex:1 1 auto;
+    min-width:110px;
+  }
+  .page-head .tab{
+    padding:5px 12px;
+    font-size:12px;
+    white-space:nowrap;
+  }
+  .page-head .filter-bar{
+    margin-top:0;
+    flex:2 1 240px;
+    min-width:0;
+    flex-wrap:nowrap;
+    overflow-x:auto;
+    padding:6px 8px;
+  }
+  .page-head .filter-bar .filter-date,
+  .page-head .filter-bar .filter-search,
+  .page-head .filter-bar select{
+    flex:0 0 auto;
+  }
+  .page-head .filter-bar .filter-date{ width:118px; }
+  .page-head .filter-bar .filter-search{ width:170px; }
+  .page-head .filter-bar select{ width:130px; }
+  .page-head .card{
+    margin:0;
+    flex:2 1 300px;
+    min-width:0;
+    padding:8px 10px;
+  }
+  .page-head .card .grid2{
+    display:flex;
+    flex-wrap:nowrap;
+    overflow-x:auto;
+    gap:8px;
+  }
+  .page-head .card .grid2 > div{ flex:0 0 150px; }
+  .page-head .card > p.muted{ display:none; }
+}
+
+/* Versi landscape di atas dipakai juga untuk layar laptop/desktop yang tidak
+   terlalu tinggi (mis. browser dibuka tidak fullscreen). Karena ruangnya
+   lebih lega dari HP, ukurannya dibuat sedikit lebih longgar dari versi HP
+   di atas supaya tidak terlalu padat/kecil dibaca. */
+@media (orientation:landscape) and (max-height:700px) and (min-width:800px){
+  .page-head{ padding:10px 20px 8px; margin:-20px -20px 10px; }
+  .page-head h2{ font-size:18px; }
+  .page-head .tab{ padding:6px 14px; font-size:13px; }
+  .page-head .filter-bar{ padding:8px 10px; }
+  .page-head .filter-bar .filter-date{ width:130px; }
+  .page-head .filter-bar .filter-search{ width:200px; }
+  .page-head .filter-bar select{ width:150px; }
+  .page-head .card{ padding:10px 12px; }
+}
+
 @media print{
   body *{visibility:hidden;}
   #printArea, #printArea *{visibility:visible;}
