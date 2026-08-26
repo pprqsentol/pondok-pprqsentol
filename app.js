@@ -333,8 +333,32 @@ function isAdmin(){ return SESSION.role === 'admin_pusat'; }
 function renderNav(){
   const items = NAV_ADMIN;
   const html = items.map(i=>`<button class="navitem" data-p="${i.id}" onclick="goPage('${i.id}')"><span class="ic">${i.icon}</span><span>${i.label}</span></button>`).join('');
-  document.getElementById('bottomnav').innerHTML = html;
-  document.getElementById('sidebar').innerHTML = html;
+  const aksiHtml = `<button class="navitem navaction" id="navRefreshBtn" onclick="refreshData()" title="Muat ulang data dari server"><span class="ic">&#8635;</span><span>Refresh</span></button><button class="navitem navaction navaction-danger" onclick="logout()" title="Keluar dari aplikasi"><span class="ic">&#8631;</span><span>Keluar</span></button>`;
+  document.getElementById('bottomnav').innerHTML = html + aksiHtml;
+  document.getElementById('sidebar').innerHTML = html + aksiHtml;
+}
+// Muat ulang semua data dari Supabase tanpa perlu login ulang, lalu render ulang halaman yang sedang dibuka.
+async function refreshData(){
+  const btn = document.getElementById('navRefreshBtn');
+  if(btn) btn.classList.add('spinning');
+  try{
+    await loadAll();
+    const oldBanner = document.getElementById('offlineBanner');
+    if(oldBanner) oldBanner.remove();
+    if(OFFLINE_MODE){
+      const b = document.createElement('div');
+      b.id = 'offlineBanner';
+      b.style.cssText = 'background:#fdecea;color:#c0392b;padding:8px 14px;font-size:13px;text-align:center';
+      b.textContent = '\u26A0 Mode offline: menampilkan cadangan data terakhir. Tambah/ubah data tidak tersedia sampai internet kembali.';
+      document.getElementById('app').prepend(b);
+    }
+    goPage(currentPage);
+  }catch(e){
+    console.error('Gagal memuat ulang data:', e);
+    alert('Gagal memuat ulang data. Cek koneksi internet lalu coba lagi.');
+  }finally{
+    if(btn) btn.classList.remove('spinning');
+  }
 }
 function goPage(p){
   currentPage = p;
