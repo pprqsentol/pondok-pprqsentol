@@ -310,6 +310,15 @@ async function logout() {
   document.getElementById('app').style.display='none';
   document.getElementById('loginScreen').style.display='flex';
 }
+/* Ukur tinggi topbar sebenarnya lalu simpan ke CSS variable --topbar-h,
+   supaya .page-head (judul tab yang stuck) selalu nempel persis di
+   bawahnya, di layar berapa pun ukurannya. */
+function syncTopbarHeight(){
+  const tb = document.querySelector('.topbar');
+  if(tb) document.documentElement.style.setProperty('--topbar-h', tb.offsetHeight + 'px');
+}
+window.addEventListener('resize', syncTopbarHeight);
+
 function enterApp(){
   document.getElementById('loginScreen').style.display='none';
   document.getElementById('app').style.display='block';
@@ -326,6 +335,7 @@ function enterApp(){
   }
   renderNav();
   goPage('beranda');
+  syncTopbarHeight();
 }
 function isAdmin(){ return SESSION.role === 'admin_pusat'; }
 
@@ -353,6 +363,7 @@ async function refreshData(){
       document.getElementById('app').prepend(b);
     }
     goPage(currentPage);
+    syncTopbarHeight();
   }catch(e){
     console.error('Gagal memuat ulang data:', e);
     alert('Gagal memuat ulang data. Cek koneksi internet lalu coba lagi.');
@@ -396,8 +407,10 @@ function pageBeranda(){
   const hadirHariIni = DB.absensi.filter(a=>a.tanggal===today && a.status==='h' && santri.some(s=>s.id===a.santriId)).length;
   const hafalanHariIni = DB.hafalan.filter(h=>h.tanggal===today && santri.some(s=>s.id===h.santriId)).length;
   return `
-    <h2>Beranda</h2>
-    <p class="muted">${isAdmin() ? 'Semua program' : SESSION.program} &middot; ${santri.length} santri</p>
+    <div class="page-head">
+      <h2>Beranda</h2>
+      <p class="muted">${isAdmin() ? 'Semua program' : SESSION.program} &middot; ${santri.length} santri</p>
+    </div>
     <div class="grid2" style="margin-top:12px">
       <div class="stat"><div class="num">${hadirHariIni}</div><div class="label">Absen hadir hari ini</div></div>
       <div class="stat"><div class="num">${hafalanHariIni}</div><div class="label">Input hafalan hari ini</div></div>
@@ -414,16 +427,48 @@ function pageBeranda(){
 }
 
 /* ---------- SANTRI: LIST ---------- */
+let santriSearchQuery = '';
+let santriProgramFilter = 'semua'; // 'semua' | 'Takhossus' | 'Non-Takhossus'
+function filteredSantriList(){
+  const q = santriSearchQuery.trim().toLowerCase();
+  return visibleSantri().filter(s=>{
+    if(santriProgramFilter!=='semua' && s.program!==santriProgramFilter) return false;
+    if(!q) return true;
+    return s.nama.toLowerCase().includes(q) || (s.noInduk||'').toLowerCase().includes(q);
+  });
+}
 function renderSantriPage(){
-  const santri = visibleSantri();
   document.getElementById('content').innerHTML = `
-    <div class="row"><h2>Data Santri</h2><button class="btn btn-accent btn-sm" onclick="openSantriForm()">+ Tambah</button></div>
-    <div class="btn-row" style="margin-bottom:10px">
+    <div class="page-head">
+      <div class="page-head-top"><h2>Data Santri</h2><button class="btn btn-accent btn-sm" onclick="openSantriForm()">+ Tambah</button></div>
+      <div class="filter-bar">
+        <div class="filter-search">
+          <input type="text" id="santriSearchInput" placeholder="Cari nama atau no. induk santri..." value="${escapeHtml(santriSearchQuery)}" oninput="santriSearchQuery=this.value; renderSantriListBody()">
+        </div>
+        <select onchange="santriProgramFilter=this.value; renderSantriListBody()">
+          <option value="semua" ${santriProgramFilter==='semua'?'selected':''}>Semua Program</option>
+          <option value="Takhossus" ${santriProgramFilter==='Takhossus'?'selected':''}>Takhossus</option>
+          <option value="Non-Takhossus" ${santriProgramFilter==='Non-Takhossus'?'selected':''}>Non-Takhossus</option>
+        </select>
+      </div>
+    </div>
+    <div class="btn-row" style="margin-bottom:10px;margin-top:0">
       <button class="btn btn-sm" onclick="exportSantriExcel()">&#128190; Unduh Excel</button>
       <button class="btn btn-sm" onclick="printSantriTable()">&#128424; Cetak</button>
     </div>
+    <div id="santriListBody"></div>
+  `;
+  renderSantriListBody();
+}
+function renderSantriListBody(){
+  const all = visibleSantri();
+  const santri = filteredSantriList();
+  const body = document.getElementById('santriListBody');
+  if(!body) return;
+  body.innerHTML = `
+    ${(santriSearchQuery.trim() || santriProgramFilter!=='semua') ? `<p class="filter-count">Menampilkan ${santri.length} dari ${all.length} santri</p>` : ''}
     <div class="card">
-      ${santri.length===0 ? '<p class="muted">Belum ada data santri.</p>' : santri.map(s=>`
+      ${santri.length===0 ? '<p class="muted">Tidak ada santri yang cocok dengan pencarian/filter.</p>' : santri.map(s=>`
         <div class="list-item">
           <div style="display:flex;align-items:center;flex:1;gap:10px;cursor:pointer;min-width:0" onclick="santriDetailTab='informasi'; openSantriDetail('${s.id}')">
             ${s.foto ? `<img class="avatar" src="${s.foto}">` : `<div class="avatar">${escapeHtml(initial(s.nama))}</div>`}
@@ -954,21 +999,24 @@ let lapTab = 'hafalan';
 let lapFrom = '', lapTo = todayStr();
 function renderLaporanPage(){
   if(!lapFrom){ const d=new Date(); d.setDate(d.getDate()-30); lapFrom=d.toISOString().slice(0,10); }
-  const santri = visibleSantri();
   document.getElementById('content').innerHTML = `
-    <h2>Laporan</h2>
-    <div class="tabs">
-      <button class="tab ${lapTab==='hafalan'?'active':''}" onclick="lapTab='hafalan'; renderLaporanPage()">Hafalan</button>
-      <button class="tab ${lapTab==='absensi'?'active':''}" onclick="lapTab='absensi'; renderLaporanPage()">Absensi</button>
-    </div>
-    <div class="card">
-      <div class="grid2">
-        <div><label>Dari tanggal</label><input type="date" value="${lapFrom}" onchange="lapFrom=this.value; renderLaporanPage()"></div>
-        <div><label>Sampai tanggal</label><input type="date" value="${lapTo}" onchange="lapTo=this.value; renderLaporanPage()"></div>
+    <div class="page-head">
+      <h2>Laporan</h2>
+      <div class="tabs">
+        <button class="tab ${lapTab==='hafalan'?'active':''}" onclick="lapTab='hafalan'; renderLaporanPage()">Hafalan</button>
+        <button class="tab ${lapTab==='absensi'?'active':''}" onclick="lapTab='absensi'; renderLaporanPage()">Absensi</button>
+      </div>
+      <div class="filter-bar">
+        <div class="filter-date"><label>Dari tanggal</label><input type="date" value="${lapFrom}" onchange="lapFrom=this.value; renderLaporanBody()"></div>
+        <div class="filter-date"><label>Sampai tanggal</label><input type="date" value="${lapTo}" onchange="lapTo=this.value; renderLaporanBody()"></div>
       </div>
     </div>
     <div id="lapBody"></div>
   `;
+  renderLaporanBody();
+}
+function renderLaporanBody(){
+  const santri = visibleSantri();
   if(lapTab==='hafalan') renderLaporanHafalan(santri); else renderLaporanAbsensi(santri);
 }
 function renderLaporanHafalan(santri){
@@ -1291,10 +1339,16 @@ function hitungLaba(){
 function renderKasPage(){
   if(!kasFrom){ const d=new Date(); d.setDate(d.getDate()-30); kasFrom=d.toISOString().slice(0,10); }
   document.getElementById('content').innerHTML = `
-    <h2>Laporan Toko</h2>
-    <div class="tabs">
-      <button class="tab ${laporanTokoTab==='kas'?'active':''}" onclick="laporanTokoTab='kas'; renderKasPage()">Kas</button>
-      <button class="tab ${laporanTokoTab==='laba'?'active':''}" onclick="laporanTokoTab='laba'; renderKasPage()">Laba</button>
+    <div class="page-head">
+      <h2>Laporan Toko</h2>
+      <div class="tabs">
+        <button class="tab ${laporanTokoTab==='kas'?'active':''}" onclick="laporanTokoTab='kas'; renderKasPage()">Kas</button>
+        <button class="tab ${laporanTokoTab==='laba'?'active':''}" onclick="laporanTokoTab='laba'; renderKasPage()">Laba</button>
+      </div>
+      <div class="filter-bar">
+        <div class="filter-date"><label>Dari tanggal</label><input type="date" value="${kasFrom}" onchange="kasFrom=this.value; renderKasBody()"></div>
+        <div class="filter-date"><label>Sampai tanggal</label><input type="date" value="${kasTo}" onchange="kasTo=this.value; renderKasBody()"></div>
+      </div>
     </div>
     <div id="kasBody"><p class="muted">Memuat data...</p></div>
   `;
@@ -1344,11 +1398,8 @@ function renderKasBodyKas(body){
     </div>
     <div class="card" style="margin-top:12px">
       <div class="row"><div class="card-title" style="margin-bottom:0">Arus Kas</div><button class="btn btn-sm btn-accent" onclick="openMutasiKasForm()">+ Catat</button></div>
-      <div class="grid2" style="margin-top:8px">
-        <div><label>Dari tanggal</label><input type="date" value="${kasFrom}" onchange="kasFrom=this.value; renderKasBody()"></div>
-        <div><label>Sampai tanggal</label><input type="date" value="${kasTo}" onchange="kasTo=this.value; renderKasBody()"></div>
-      </div>
-      <div class="grid2" style="margin-top:8px">
+      <p class="muted" style="margin:2px 0 8px">Periode: ${kasFrom} s.d. ${kasTo}</p>
+      <div class="grid2">
         <div class="stat"><div class="num">${formatRupiah(k.masukPeriode)}</div><div class="label">Kas Masuk</div></div>
         <div class="stat"><div class="num">${formatRupiah(k.keluarPeriode)}</div><div class="label">Kas Keluar</div></div>
       </div>
@@ -1362,12 +1413,7 @@ function renderKasBodyKas(body){
 function renderLabaBody(body){
   const l = hitungLaba();
   body.innerHTML = `
-    <div class="card">
-      <div class="grid2">
-        <div><label>Dari tanggal</label><input type="date" value="${kasFrom}" onchange="kasFrom=this.value; renderKasBody()"></div>
-        <div><label>Sampai tanggal</label><input type="date" value="${kasTo}" onchange="kasTo=this.value; renderKasBody()"></div>
-      </div>
-    </div>
+    <p class="muted" style="margin:0 0 8px">Periode: ${kasFrom} s.d. ${kasTo}</p>
     <div class="grid2">
       <div class="stat"><div class="num">${formatRupiah(l.omzet)}</div><div class="label">Omzet</div></div>
       <div class="stat"><div class="num">${formatRupiah(l.labaTunai)}</div><div class="label">Laba Tunai</div></div>
@@ -1521,11 +1567,13 @@ function groupTagihan(){
 }
 function renderTagihanPage(){
   document.getElementById('content').innerHTML = `
-    <h2>Tagihan</h2>
-    <p class="muted">Data tagihan &amp; iuran ditarik dari Aplikasi Keuangan (baca saja). Pembayaran dicatat lewat Aplikasi Keuangan.</p>
-    <div class="tabs">
-      <button class="tab ${tagihanSubTab==='tagihan'?'active':''}" onclick="tagihanSubTab='tagihan'; renderTagihanPage()">Tagihan</button>
-      <button class="tab ${tagihanSubTab==='iuran'?'active':''}" onclick="tagihanSubTab='iuran'; renderTagihanPage()">Iuran</button>
+    <div class="page-head">
+      <h2>Tagihan</h2>
+      <p class="muted">Data tagihan &amp; iuran ditarik dari Aplikasi Keuangan (baca saja). Pembayaran dicatat lewat Aplikasi Keuangan.</p>
+      <div class="tabs">
+        <button class="tab ${tagihanSubTab==='tagihan'?'active':''}" onclick="tagihanSubTab='tagihan'; renderTagihanPage()">Tagihan</button>
+        <button class="tab ${tagihanSubTab==='iuran'?'active':''}" onclick="tagihanSubTab='iuran'; renderTagihanPage()">Iuran</button>
+      </div>
     </div>
     <div id="tagihanBody"><p class="muted">Memuat data...</p></div>
   `;
@@ -1587,27 +1635,57 @@ function renderIuranBody(body){
 
 /* ---------- RAPOR ---------- */
 let raporFrom = '', raporTo = todayStr();
+let raporSearchQuery = '';
+let raporProgramFilter = 'semua'; // 'semua' | 'Takhossus' | 'Non-Takhossus'
+function filteredRaporSantri(){
+  const q = raporSearchQuery.trim().toLowerCase();
+  return visibleSantri().filter(s=>{
+    if(raporProgramFilter!=='semua' && s.program!==raporProgramFilter) return false;
+    if(!q) return true;
+    return s.nama.toLowerCase().includes(q) || (s.noInduk||'').toLowerCase().includes(q);
+  });
+}
 function renderRaporPage(){
   if(!raporFrom){ const d=new Date(); d.setDate(d.getDate()-30); raporFrom=d.toISOString().slice(0,10); }
-  const santri = visibleSantri();
+  document.getElementById('content').innerHTML = `
+    <div class="page-head">
+      <h2>Rapor</h2>
+      <div class="card">
+        <div class="grid2">
+          <div><label>Dari tanggal</label><input type="date" value="${raporFrom}" onchange="raporFrom=this.value; renderRaporBody()"></div>
+          <div><label>Sampai tanggal</label><input type="date" value="${raporTo}" onchange="raporTo=this.value; renderRaporBody()"></div>
+        </div>
+        <p class="muted" style="margin-top:8px">Target hafalan: ${TARGET_HAFALAN_PER_HARI} halaman/hari. Predikat: A &ge;90%, B &ge;75%, C &ge;60%, D &ge;40%, E &lt;40%.</p>
+      </div>
+      <div class="filter-bar">
+        <div class="filter-search">
+          <input type="text" id="raporSearchInput" placeholder="Cari nama atau no. induk santri..." value="${escapeHtml(raporSearchQuery)}" oninput="raporSearchQuery=this.value; renderRaporBody()">
+        </div>
+        <select onchange="raporProgramFilter=this.value; renderRaporBody()">
+          <option value="semua" ${raporProgramFilter==='semua'?'selected':''}>Semua Program</option>
+          <option value="Takhossus" ${raporProgramFilter==='Takhossus'?'selected':''}>Takhossus</option>
+          <option value="Non-Takhossus" ${raporProgramFilter==='Non-Takhossus'?'selected':''}>Non-Takhossus</option>
+        </select>
+        <button class="btn btn-sm btn-accent" title="Mengunduh rekap SEMUA santri, tidak terpengaruh pencarian/filter di atas" onclick="exportRaporExcel()">&#128190; Unduh Excel</button>
+      </div>
+    </div>
+    <div id="raporBody"></div>
+  `;
+  renderRaporBody();
+}
+function renderRaporBody(){
+  const santri = filteredRaporSantri();
+  const allCount = visibleSantri().length;
   const rows = santri.map(s=>{
     const total = totalHafalanSantri(s.id);
     const nh = nilaiHafalanSantri(s.id, raporFrom, raporTo);
     const na = nilaiAbsensiSantri(s.id, raporFrom, raporTo);
     return { s, total, nh, na };
   });
-  document.getElementById('content').innerHTML = `
-    <h2>Rapor</h2>
-    <div class="card">
-      <div class="grid2">
-        <div><label>Dari tanggal</label><input type="date" value="${raporFrom}" onchange="raporFrom=this.value; renderRaporPage()"></div>
-        <div><label>Sampai tanggal</label><input type="date" value="${raporTo}" onchange="raporTo=this.value; renderRaporPage()"></div>
-      </div>
-      <p class="muted" style="margin-top:8px">Target hafalan: ${TARGET_HAFALAN_PER_HARI} halaman/hari. Predikat: A &ge;90%, B &ge;75%, C &ge;60%, D &ge;40%, E &lt;40%.</p>
-    </div>
-    <div class="btn-row" style="margin-bottom:10px">
-      <button class="btn btn-sm" onclick="exportRaporExcel()">&#128190; Unduh Excel (Rekap Semua Santri)</button>
-    </div>
+  const body = document.getElementById('raporBody');
+  if(!body) return;
+  body.innerHTML = `
+    ${(raporSearchQuery.trim() || raporProgramFilter!=='semua') ? `<p class="filter-count">Menampilkan ${rows.length} dari ${allCount} santri</p>` : ''}
     <div class="card">
       <div class="card-title">Grafik hafalan bertambah per santri (periode terpilih)</div>
       <canvas id="chartRaporHafalan" width="600" height="200" style="width:100%;height:170px"></canvas>
@@ -1615,7 +1693,7 @@ function renderRaporPage(){
     <div class="card">
       <table>
         <tr><th>Santri</th><th>Total Hafalan</th><th>Tambah (periode)</th><th>Nilai Hafalan</th><th>Kehadiran</th><th>Nilai Absensi</th><th></th></tr>
-        ${rows.map(r=>`
+        ${rows.length===0 ? `<tr><td colspan="7" class="muted" style="text-align:center;padding:14px">Tidak ada santri yang cocok dengan pencarian/filter.</td></tr>` : rows.map(r=>`
           <tr>
             <td>${escapeHtml(r.s.nama)}</td>
             <td>Juz ${r.total.juz} hal. ${r.total.halaman}</td>
@@ -1746,7 +1824,7 @@ function unduhRaporWord(santriId){
 /* ---------- KELOLA (admin) ---------- */
 function renderKelolaPage(){
   document.getElementById('content').innerHTML = `
-    <h2>Kelola</h2>
+    <div class="page-head"><h2>Kelola</h2></div>
     <div id="kelolaBody"></div>
   `;
   renderKelolaKegiatan();
@@ -1785,7 +1863,9 @@ async function delKegiatan(id){
 /* ---------- TAB PEMBINA (data pembina) ---------- */
 function renderPembinaPage(){
   document.getElementById('content').innerHTML = `
-    <div class="row"><h2>Data Pembina</h2><button class="btn btn-accent btn-sm" onclick="openPembinaForm()">+ Tambah</button></div>
+    <div class="page-head">
+      <div class="page-head-top"><h2>Data Pembina</h2><button class="btn btn-accent btn-sm" onclick="openPembinaForm()">+ Tambah</button></div>
+    </div>
     <div class="card">
       ${DB.pembina.length===0?'<p class="muted">Belum ada data pembina.</p>':DB.pembina.map(p=>`
         <div class="list-item">
