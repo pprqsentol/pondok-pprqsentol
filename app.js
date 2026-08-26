@@ -1166,27 +1166,36 @@ function renderLaporanAbsensi(santri){
 
 /* ---------- LAPORAN TOKO: sub-tab KAS & LABA ======
    Mengambil data dari tabel yang sama dipakai aplikasi kasir toko:
-   kas_awal (modal awal per lokasi), mutasi_kas (kas masuk/keluar),
+   kas_awal (modal awal), mutasi_kas (kas masuk/keluar),
    produk (untuk nilai stok & harga jual/beli), transaksi_toko (penjualan).
+   Catatan: kolom "lokasi" pada tabel-tabel ini sudah tidak dipakai untuk
+   memisahkan data (dulu per toko/lokasi) — sekarang semua digabung jadi satu
+   angka saja, karena pembedaan pencatat sekarang pakai nama admin (dicatat_oleh).
 
    -- Sub-tab KAS (posisi keuangan saat ini, tidak terikat periode) --
-   Saldo Kas   = modal awal + kas masuk - kas keluar (per lokasi, lalu dijumlah)
-   Nilai Stok  = jumlah (stok x harga beli) semua produk
-   Piutang     = total transaksi dengan metode Hutang yang belum lunas
-   Modal       = modal awal + kas masuk kategori "modal" - kas keluar kategori "modal"/"prive"
-   Laba Kumulatif = (Saldo Kas + Nilai Stok + Piutang) - Modal
+   Saldo Kas  = modal awal + kas masuk - kas keluar (semua digabung, tanpa pisah lokasi)
+   Nilai Stok = jumlah (stok x harga beli) semua produk
+   Total Laba = total laba kotor kumulatif dari SELURUH transaksi penjualan (all-time)
+   Modal Saat Ini = Saldo Kas + Nilai Stok - Total Laba
+   (Modal Saat Ini seharusnya stabil dari waktu ke waktu; kalau tiba-tiba turun
+    sendiri di luar Prive/Biaya Operasional yang dicatat, tandanya ada barang
+    hilang/susut atau salah catat.)
+   Piutang    = total transaksi dengan metode Hutang yang belum lunas.
+                Ini murni catatan hutang pelanggan, TIDAK ikut dihitung di
+                Saldo Kas / Nilai Stok / Total Laba / Modal Saat Ini di atas.
 
    -- Sub-tab LABA (arus laba dalam rentang tanggal terpilih) --
    Omzet       = total nilai semua transaksi penjualan dalam periode
    Laba Tunai  = laba kotor dari transaksi metode Tunai/Saldo (uang sudah diterima)
    Laba Kredit = laba kotor dari transaksi metode Hutang
-   Total Laba  = Laba Tunai + Laba Kredit
+   Total Laba  = Laba Tunai + Laba Kredit (khusus periode terpilih)
    Operasional = total kas keluar kategori "operasional" dalam periode
    Laba Bersih = Total Laba - Operasional
    (laba kotor per transaksi dihitung dari harga jual - harga beli produk saat ini) ------- */
 let kasFrom = '', kasTo = todayStr();
 let laporanTokoTab = 'kas'; // 'kas' | 'laba'
 let KAS_DATA = null;
+const KAS_LOKASI_DEFAULT = 'Utama'; // nilai lokasi tetap untuk baris baru (kolom lokasi tidak dipakai lagi di UI)
 
 function formatRupiah(n){
   return 'Rp' + Math.round(n||0).toLocaleString('id-ID');
@@ -1196,8 +1205,8 @@ async function loadKasData(){
     const [kasAwalRes, mutasiRes, produkRes, transaksiRes] = await Promise.all([
       sb.from('kas_awal').select('*'),
       sb.from('mutasi_kas').select('*'),
-      sb.from('produk').select('id,stok,harga_beli,harga_jual,lokasi'),
-      sb.from('transaksi_toko').select('id,items,total,metode,status_bayar,lokasi,created_at')
+      sb.from('produk').select('id,stok,harga_beli,harga_jual'),
+      sb.from('transaksi_toko').select('id,items,total,metode,status_bayar,created_at')
     ]);
     if(kasAwalRes.error) throw kasAwalRes.error;
     if(mutasiRes.error) throw mutasiRes.error;
@@ -1214,42 +1223,42 @@ async function loadKasData(){
     KAS_DATA = 'error';
   }
 }
+function labaKotorTransaksi(t, produkMap){
+  return (t.items||[]).reduce((s,it)=>{
+    const p = produkMap[it.produk_id];
+    if(!p) return s;
+    const hj = Number(p.harga_jual)||0, hb = Number(p.harga_beli)||0, qty = Number(it.qty)||0;
+    return s + (hj-hb)*qty;
+  }, 0);
+}
 function hitungKas(){
-  const lokasiList = KAS_DATA.kasAwal.map(k=>k.lokasi);
-  const perLokasi = lokasiList.map(lok=>{
-    const awal = Number((KAS_DATA.kasAwal.find(k=>k.lokasi===lok)||{}).nominal || 0);
-    const masuk = KAS_DATA.mutasi.filter(m=>m.lokasi===lok && m.arah==='masuk').reduce((s,m)=>s+Number(m.jumlah),0);
-    const keluar = KAS_DATA.mutasi.filter(m=>m.lokasi===lok && m.arah==='keluar').reduce((s,m)=>s+Number(m.jumlah),0);
-    const stok = KAS_DATA.produk.filter(p=>p.lokasi===lok).reduce((s,p)=>s+Number(p.stok)*Number(p.harga_beli),0);
-    return { lokasi: lok, awal, saldo: awal + masuk - keluar, stok };
-  });
-  const totalSaldoKas = perLokasi.reduce((s,l)=>s+l.saldo,0);
-  const totalNilaiStok = perLokasi.reduce((s,l)=>s+l.stok,0);
+  const modalAwal = KAS_DATA.kasAwal.reduce((s,k)=>s+Number(k.nominal||0),0);
+  const kasMasuk = KAS_DATA.mutasi.filter(m=>m.arah==='masuk').reduce((s,m)=>s+Number(m.jumlah),0);
+  const kasKeluar = KAS_DATA.mutasi.filter(m=>m.arah==='keluar').reduce((s,m)=>s+Number(m.jumlah),0);
+  const totalSaldoKas = modalAwal + kasMasuk - kasKeluar;
+
+  const totalNilaiStok = KAS_DATA.produk.reduce((s,p)=>s+Number(p.stok)*Number(p.harga_beli),0);
+
+  const produkMap = {};
+  KAS_DATA.produk.forEach(p=>{ produkMap[p.id] = p; });
+  const totalLaba = KAS_DATA.transaksiToko.reduce((s,t)=>s+labaKotorTransaksi(t, produkMap), 0);
+
+  const modalSaatIni = totalSaldoKas + totalNilaiStok - totalLaba;
+
   const totalPiutang = KAS_DATA.transaksiToko.filter(t=>t.metode==='Hutang' && t.status_bayar==='belum_bayar').reduce((s,t)=>s+Number(t.total),0);
-  const modalAwal = perLokasi.reduce((s,l)=>s+l.awal,0);
-  const modalMasuk = KAS_DATA.mutasi.filter(m=>m.kategori==='modal' && m.arah==='masuk').reduce((s,m)=>s+Number(m.jumlah),0);
-  const modalKeluar = KAS_DATA.mutasi.filter(m=>(m.kategori==='modal'||m.kategori==='prive') && m.arah==='keluar').reduce((s,m)=>s+Number(m.jumlah),0);
-  const totalModal = modalAwal + modalMasuk - modalKeluar;
-  const labaKumulatif = (totalSaldoKas + totalNilaiStok + totalPiutang) - totalModal;
+
   const masukPeriode = KAS_DATA.mutasi.filter(m=>m.arah==='masuk' && (m.tanggal||'').slice(0,10)>=kasFrom && (m.tanggal||'').slice(0,10)<=kasTo).reduce((s,m)=>s+Number(m.jumlah),0);
   const keluarPeriode = KAS_DATA.mutasi.filter(m=>m.arah==='keluar' && (m.tanggal||'').slice(0,10)>=kasFrom && (m.tanggal||'').slice(0,10)<=kasTo).reduce((s,m)=>s+Number(m.jumlah),0);
-  return { perLokasi, totalSaldoKas, totalNilaiStok, totalPiutang, totalModal, labaKumulatif, masukPeriode, keluarPeriode };
+
+  return { modalAwal, totalSaldoKas, totalNilaiStok, totalLaba, modalSaatIni, totalPiutang, masukPeriode, keluarPeriode };
 }
 function hitungLaba(){
   const produkMap = {};
   KAS_DATA.produk.forEach(p=>{ produkMap[p.id] = p; });
   const transaksiPeriode = KAS_DATA.transaksiToko.filter(t=>(t.created_at||'').slice(0,10)>=kasFrom && (t.created_at||'').slice(0,10)<=kasTo);
-  function labaKotorTransaksi(t){
-    return (t.items||[]).reduce((s,it)=>{
-      const p = produkMap[it.produk_id];
-      if(!p) return s;
-      const hj = Number(p.harga_jual)||0, hb = Number(p.harga_beli)||0, qty = Number(it.qty)||0;
-      return s + (hj-hb)*qty;
-    }, 0);
-  }
   const omzet = transaksiPeriode.reduce((s,t)=>s+Number(t.total),0);
-  const labaTunai = transaksiPeriode.filter(t=>t.metode==='Tunai'||t.metode==='Saldo').reduce((s,t)=>s+labaKotorTransaksi(t),0);
-  const labaKredit = transaksiPeriode.filter(t=>t.metode==='Hutang').reduce((s,t)=>s+labaKotorTransaksi(t),0);
+  const labaTunai = transaksiPeriode.filter(t=>t.metode==='Tunai'||t.metode==='Saldo').reduce((s,t)=>s+labaKotorTransaksi(t, produkMap),0);
+  const labaKredit = transaksiPeriode.filter(t=>t.metode==='Hutang').reduce((s,t)=>s+labaKotorTransaksi(t, produkMap),0);
   const totalLaba = labaTunai + labaKredit;
   const operasional = KAS_DATA.mutasi.filter(m=>m.kategori==='operasional' && m.arah==='keluar' && (m.tanggal||'').slice(0,10)>=kasFrom && (m.tanggal||'').slice(0,10)<=kasTo).reduce((s,m)=>s+Number(m.jumlah),0);
   const labaBersih = totalLaba - operasional;
@@ -1283,13 +1292,31 @@ function renderKasBodyKas(body){
     <div class="grid2">
       <div class="stat"><div class="num">${formatRupiah(k.totalSaldoKas)}</div><div class="label">Saldo Kas</div></div>
       <div class="stat"><div class="num">${formatRupiah(k.totalNilaiStok)}</div><div class="label">Nilai Stok</div></div>
-      <div class="stat"><div class="num">${formatRupiah(k.totalPiutang)}</div><div class="label">Piutang</div></div>
-      <div class="stat"><div class="num">${formatRupiah(k.totalModal)}</div><div class="label">Modal</div></div>
     </div>
     <div class="card" style="margin-top:12px">
-      <div class="card-title">Laba Kumulatif</div>
-      <div style="font-size:24px;font-weight:700;color:${k.labaKumulatif>=0?'var(--green-700)':'var(--danger)'}">${formatRupiah(k.labaKumulatif)}</div>
-      <p class="muted" style="margin-top:4px">Total aset (kas + stok + piutang) dikurangi modal.</p>
+      <div class="card-title">Modal</div>
+      <p class="muted" style="margin-top:-6px;margin-bottom:10px">Modal = uang tunai + nilai barang di rak, dikeluarkan dari laba yang sudah dihasilkan. Angka ini seharusnya <b>stabil</b> dari waktu ke waktu — kalau tiba-tiba turun sendiri (di luar Prive/Biaya Operasional yang kamu catat), itu tanda ada barang hilang/susut atau salah catat.</p>
+      <div class="list-item">
+        <div class="name" style="flex:1">Saldo Kas</div>
+        <div style="font-weight:600">${formatRupiah(k.totalSaldoKas)}</div>
+      </div>
+      <div class="list-item">
+        <div class="name" style="flex:1">+ Nilai Stok</div>
+        <div style="font-weight:600">${formatRupiah(k.totalNilaiStok)}</div>
+      </div>
+      <div class="list-item">
+        <div class="name" style="flex:1">– Total Laba</div>
+        <div style="font-weight:600">${formatRupiah(k.totalLaba)}</div>
+      </div>
+      <div class="list-item" style="border-top:2px solid var(--border);border-bottom:none;margin-top:2px;padding-top:12px">
+        <div class="name" style="flex:1">Modal Saat Ini</div>
+        <div style="font-weight:700;font-size:18px;color:${k.modalSaatIni>=0?'var(--green-700)':'var(--danger)'}">${formatRupiah(k.modalSaatIni)}</div>
+      </div>
+    </div>
+    <div class="card" style="margin-top:12px">
+      <div class="card-title">Piutang</div>
+      <div style="font-size:20px;font-weight:700">${formatRupiah(k.totalPiutang)}</div>
+      <p class="muted" style="margin-top:4px">Murni catatan hutang pelanggan yang belum bayar — tidak ikut dihitung di Modal/Laba di atas.</p>
     </div>
     <div class="card" style="margin-top:12px">
       <div class="row"><div class="card-title" style="margin-bottom:0">Arus Kas</div><button class="btn btn-sm btn-accent" onclick="openMutasiKasForm()">+ Catat</button></div>
@@ -1303,16 +1330,8 @@ function renderKasBodyKas(body){
       </div>
     </div>
     <div class="card" style="margin-top:12px">
-      <div class="card-title">Saldo Kas per Lokasi</div>
-      ${k.perLokasi.map(l=>`
-        <div class="list-item">
-          <div style="flex:1">
-            <div class="name">${l.lokasi}</div>
-            <div class="sub">Modal awal: ${formatRupiah(l.awal)}</div>
-          </div>
-          <div style="text-align:right;font-weight:600">${formatRupiah(l.saldo)}</div>
-          <button class="btn btn-sm" title="Ubah modal awal" onclick="openKasAwalForm('${l.lokasi}', ${l.awal})">&#9998;</button>
-        </div>`).join('')}
+      <div class="row"><div class="card-title" style="margin-bottom:0">Modal Awal</div><button class="btn btn-sm" title="Ubah modal awal" onclick="openKasAwalForm()">&#9998; Ubah</button></div>
+      <div style="font-size:18px;font-weight:600;margin-top:4px">${formatRupiah(k.modalAwal)}</div>
     </div>
   `;
 }
@@ -1344,10 +1363,7 @@ function renderLabaBody(body){
   `;
 }
 function openMutasiKasForm(){
-  const lokasiOptions = KAS_DATA.kasAwal.map(k=>k.lokasi);
   showModal('Catat Kas Masuk/Keluar', `
-    <label>Lokasi</label>
-    <select id="f_kasLokasi">${lokasiOptions.map(l=>`<option value="${l}">${l}</option>`).join('')}</select>
     <label>Arah</label>
     <select id="f_kasArah">
       <option value="masuk">Kas Masuk</option>
@@ -1377,7 +1393,7 @@ async function saveMutasiKas(){
   if(!jumlah || jumlah<=0){ alert('Isi jumlah dengan angka lebih dari 0.'); return; }
   if(OFFLINE_MODE){ alert('Sedang mode offline (tidak ada internet). Data tidak bisa disimpan sekarang.'); return; }
   const row = {
-    lokasi: val('f_kasLokasi'),
+    lokasi: KAS_LOKASI_DEFAULT,
     arah: val('f_kasArah'),
     kategori: val('f_kasKategori'),
     jumlah,
@@ -1390,20 +1406,35 @@ async function saveMutasiKas(){
   closeModal();
   renderKasBody();
 }
-function openKasAwalForm(lokasi, nominal){
-  showModal('Modal Awal - ' + lokasi, `
+function openKasAwalForm(){
+  const totalSaatIni = KAS_DATA.kasAwal.reduce((s,k)=>s+Number(k.nominal||0),0);
+  showModal('Modal Awal', `
     <label>Modal awal (Rp)</label>
-    <input id="f_kasAwalNominal" type="number" min="0" value="${nominal}">
+    <input id="f_kasAwalNominal" type="number" min="0" value="${totalSaatIni}">
     <div class="btn-row">
-      <button class="btn btn-accent" onclick="saveKasAwal('${lokasi}')">Simpan</button>
+      <button class="btn btn-accent" onclick="saveKasAwal()">Simpan</button>
     </div>
   `);
 }
-async function saveKasAwal(lokasi){
+async function saveKasAwal(){
   const nominal = Number(val('f_kasAwalNominal'));
   if(OFFLINE_MODE){ alert('Sedang mode offline (tidak ada internet). Data tidak bisa disimpan sekarang.'); return; }
-  const { error } = await sb.from('kas_awal').update({ nominal }).eq('lokasi', lokasi);
-  if(error){ alert('Gagal menyimpan: ' + error.message); return; }
+  const rows = KAS_DATA.kasAwal;
+  if(rows.length === 0){
+    const { error } = await sb.from('kas_awal').insert({ lokasi: KAS_LOKASI_DEFAULT, nominal });
+    if(error){ alert('Gagal menyimpan: ' + error.message); return; }
+  } else {
+    // Semua digabung jadi satu angka saja: simpan nilai baru di baris pertama,
+    // nolkan baris lain (peninggalan dari saat data masih dipisah per lokasi).
+    const [first, ...rest] = rows;
+    const { error: e1 } = await sb.from('kas_awal').update({ nominal }).eq('lokasi', first.lokasi);
+    if(e1){ alert('Gagal menyimpan: ' + e1.message); return; }
+    for(const r of rest){
+      if(Number(r.nominal) !== 0){
+        await sb.from('kas_awal').update({ nominal: 0 }).eq('lokasi', r.lokasi);
+      }
+    }
+  }
   closeModal();
   renderKasBody();
 }
