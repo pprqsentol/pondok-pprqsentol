@@ -339,7 +339,7 @@ window.addEventListener('resize', syncTopbarHeight);
 
 function enterApp(){
   document.getElementById('loginScreen').style.display='none';
-  document.getElementById('app').style.display='block';
+  document.getElementById('app').style.removeProperty('display');
   const roleLabel = 'Admin Pusat';
   document.getElementById('userLabel').textContent = SESSION.nama ? (SESSION.nama + ' \u00b7 ' + roleLabel) : roleLabel;
   const oldBanner = document.getElementById('offlineBanner');
@@ -1020,14 +1020,14 @@ function renderLaporanPage(){
   if(!lapFrom){ const d=new Date(); d.setDate(d.getDate()-30); lapFrom=d.toISOString().slice(0,10); }
   document.getElementById('content').innerHTML = `
     <div class="page-head">
-      <h2>Laporan</h2>
+      <div class="page-head-top"><h2>Laporan</h2></div>
       <div class="tabs">
         <button class="tab ${lapTab==='hafalan'?'active':''}" onclick="lapTab='hafalan'; renderLaporanPage()">Hafalan</button>
         <button class="tab ${lapTab==='absensi'?'active':''}" onclick="lapTab='absensi'; renderLaporanPage()">Absensi</button>
       </div>
       <div class="filter-bar">
-        <div class="filter-date"><label>Dari tanggal</label><input type="date" value="${lapFrom}" onchange="lapFrom=this.value; renderLaporanBody()"></div>
-        <div class="filter-date"><label>Sampai tanggal</label><input type="date" value="${lapTo}" onchange="lapTo=this.value; renderLaporanBody()"></div>
+        <div class="filter-date"><label>Dari</label><input type="date" value="${lapFrom}" onchange="lapFrom=this.value; renderLaporanBody()"></div>
+        <div class="filter-date"><label>S.d.</label><input type="date" value="${lapTo}" onchange="lapTo=this.value; renderLaporanBody()"></div>
       </div>
     </div>
     <div id="lapBody"></div>
@@ -1359,14 +1359,14 @@ function renderKasPage(){
   if(!kasFrom){ const d=new Date(); d.setDate(d.getDate()-30); kasFrom=d.toISOString().slice(0,10); }
   document.getElementById('content').innerHTML = `
     <div class="page-head">
-      <h2>Laporan Toko</h2>
+      <div class="page-head-top"><h2>Laporan Toko</h2></div>
       <div class="tabs">
         <button class="tab ${laporanTokoTab==='kas'?'active':''}" onclick="laporanTokoTab='kas'; renderKasPage()">Kas</button>
         <button class="tab ${laporanTokoTab==='laba'?'active':''}" onclick="laporanTokoTab='laba'; renderKasPage()">Laba</button>
       </div>
       <div class="filter-bar">
-        <div class="filter-date"><label>Dari tanggal</label><input type="date" value="${kasFrom}" onchange="kasFrom=this.value; renderKasBody()"></div>
-        <div class="filter-date"><label>Sampai tanggal</label><input type="date" value="${kasTo}" onchange="kasTo=this.value; renderKasBody()"></div>
+        <div class="filter-date"><label>Dari</label><input type="date" value="${kasFrom}" onchange="kasFrom=this.value; renderKasBody()"></div>
+        <div class="filter-date"><label>S.d.</label><input type="date" value="${kasTo}" onchange="kasTo=this.value; renderKasBody()"></div>
       </div>
     </div>
     <div class="btn-row" style="margin-bottom:10px">
@@ -1590,12 +1590,12 @@ function groupTagihan(){
 function renderTagihanPage(){
   document.getElementById('content').innerHTML = `
     <div class="page-head">
-      <h2>Tagihan</h2>
-      <p class="muted">Data tagihan &amp; iuran ditarik dari Aplikasi Keuangan (baca saja). Pembayaran dicatat lewat Aplikasi Keuangan.</p>
+      <div class="page-head-top"><h2>Tagihan</h2></div>
       <div class="tabs">
         <button class="tab ${tagihanSubTab==='tagihan'?'active':''}" onclick="tagihanSubTab='tagihan'; renderTagihanPage()">Tagihan</button>
         <button class="tab ${tagihanSubTab==='iuran'?'active':''}" onclick="tagihanSubTab='iuran'; renderTagihanPage()">Iuran</button>
       </div>
+      <p class="muted" style="margin:6px 2px 0;font-size:11px">Data tagihan &amp; iuran ditarik dari Aplikasi Keuangan (baca saja). Pembayaran dicatat lewat Aplikasi Keuangan.</p>
     </div>
     <div id="tagihanBody"><p class="muted">Memuat data...</p></div>
   `;
@@ -1671,15 +1671,10 @@ function renderRaporPage(){
   if(!raporFrom){ const d=new Date(); d.setDate(d.getDate()-30); raporFrom=d.toISOString().slice(0,10); }
   document.getElementById('content').innerHTML = `
     <div class="page-head">
-      <h2>Rapor</h2>
-      <div class="card">
-        <div class="grid2">
-          <div><label>Dari tanggal</label><input type="date" value="${raporFrom}" onchange="raporFrom=this.value; renderRaporBody()"></div>
-          <div><label>Sampai tanggal</label><input type="date" value="${raporTo}" onchange="raporTo=this.value; renderRaporBody()"></div>
-        </div>
-        <p class="muted" style="margin-top:8px">Target hafalan: ${TARGET_HAFALAN_PER_HARI} halaman/hari. Predikat: A &ge;90%, B &ge;75%, C &ge;60%, D &ge;40%, E &lt;40%.</p>
-      </div>
+      <div class="page-head-top"><h2>Rapor</h2></div>
       <div class="filter-bar">
+        <div class="filter-date"><label>Dari</label><input type="date" value="${raporFrom}" onchange="raporFrom=this.value; renderRaporBody()"></div>
+        <div class="filter-date"><label>S.d.</label><input type="date" value="${raporTo}" onchange="raporTo=this.value; renderRaporBody()"></div>
         <div class="filter-search">
           <input type="text" id="raporSearchInput" placeholder="Cari nama atau no. induk santri..." value="${escapeHtml(raporSearchQuery)}" oninput="raporSearchQuery=this.value; renderRaporBody()">
         </div>
@@ -1690,6 +1685,7 @@ function renderRaporPage(){
         </select>
         <button class="btn btn-sm btn-accent" title="Mengunduh rekap SEMUA santri, tidak terpengaruh pencarian/filter di atas" onclick="exportRaporExcel()">&#128190; Unduh Excel</button>
       </div>
+      <p class="muted" style="margin:6px 2px 0;font-size:11px">Target hafalan: ${TARGET_HAFALAN_PER_HARI} halaman/hari &middot; Predikat: A&ge;90%, B&ge;75%, C&ge;60%, D&ge;40%, E&lt;40%</p>
     </div>
     <div id="raporBody"></div>
   `;
@@ -1709,10 +1705,6 @@ function renderRaporBody(){
   body.innerHTML = `
     ${(raporSearchQuery.trim() || raporProgramFilter!=='semua') ? `<p class="filter-count">Menampilkan ${rows.length} dari ${allCount} santri</p>` : ''}
     <div class="card">
-      <div class="card-title">Grafik hafalan bertambah per santri (periode terpilih)</div>
-      <canvas id="chartRaporHafalan" width="600" height="200" style="width:100%;height:170px"></canvas>
-    </div>
-    <div class="card">
       <div class="table-wrap"><table>
         <tr><th>Santri</th><th>Total Hafalan</th><th>Tambah (periode)</th><th>Nilai Hafalan</th><th>Kehadiran</th><th>Nilai Absensi</th><th></th></tr>
         ${rows.length===0 ? `<tr><td colspan="7" class="muted" style="text-align:center;padding:14px">Tidak ada santri yang cocok dengan pencarian/filter.</td></tr>` : rows.map(r=>`
@@ -1729,31 +1721,6 @@ function renderRaporBody(){
       </table></div>
     </div>
   `;
-  drawRaporHafalanChart(rows);
-}
-function drawRaporHafalanChart(rows){
-  const canvas = document.getElementById('chartRaporHafalan');
-  if(!canvas) return;
-  const ctx = canvas.getContext('2d');
-  const W = canvas.width, H = canvas.height, padL=30, padB=50;
-  ctx.clearRect(0,0,W,H);
-  if(rows.length===0){ ctx.fillStyle='#888'; ctx.font='13px sans-serif'; ctx.fillText('Belum ada data.', 10, H/2); return; }
-  const warna = {A:'#3b5940', B:'#2f7d9d', C:'#d19a24', D:'#e07b39', E:'#c0392b'};
-  const maxV = Math.max(1, ...rows.map(r=>r.nh.tambahan));
-  const barW = Math.max(14, (W-padL-10) / rows.length - 6);
-  ctx.strokeStyle='#ddd'; ctx.beginPath(); ctx.moveTo(padL,H-padB); ctx.lineTo(W-10,H-padB); ctx.stroke();
-  rows.forEach((r,i)=>{
-    const x = padL + i*(barW+6);
-    const h = (r.nh.tambahan/maxV) * (H-padB-15);
-    ctx.fillStyle = warna[r.nh.predikat] || '#555';
-    ctx.fillRect(x, H-padB-h, barW, h);
-    ctx.save();
-    ctx.translate(x+barW/2, H-padB+4);
-    ctx.rotate(Math.PI/4);
-    ctx.fillStyle='#555'; ctx.font='9px sans-serif'; ctx.textAlign='left';
-    ctx.fillText(r.s.nama.split(' ')[0], 0, 0);
-    ctx.restore();
-  });
 }
 function exportRaporExcel(){
   const santri = visibleSantri();
