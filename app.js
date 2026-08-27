@@ -1332,11 +1332,13 @@ function hitungKas(){
   const totalLaba = Number(r.laba_kumulatif)||0;
   const modalSaatIni = Number(r.modal_saat_ini)||0;
   const totalPiutang = Number(r.piutang)||0;
+  const biayaOperasional = Number(r.biaya_operasional_kumulatif)||0;
+  const totalPrive = Number(r.prive_kumulatif)||0;
 
   const masukPeriode = KAS_DATA.mutasi.filter(m=>m.arah==='masuk' && (m.tanggal||'').slice(0,10)>=kasFrom && (m.tanggal||'').slice(0,10)<=kasTo).reduce((s,m)=>s+Number(m.jumlah),0);
   const keluarPeriode = KAS_DATA.mutasi.filter(m=>m.arah==='keluar' && (m.tanggal||'').slice(0,10)>=kasFrom && (m.tanggal||'').slice(0,10)<=kasTo).reduce((s,m)=>s+Number(m.jumlah),0);
 
-  return { modalAwal, totalSaldoKas, totalNilaiStok, totalLaba, modalSaatIni, totalPiutang, masukPeriode, keluarPeriode };
+  return { modalAwal, totalSaldoKas, totalNilaiStok, totalLaba, modalSaatIni, totalPiutang, biayaOperasional, totalPrive, masukPeriode, keluarPeriode };
 }
 function hitungLaba(){
   const itemsPeriode = KAS_DATA.transaksiItem.filter(it=>!it.dibatalkan && (it.created_at||'').slice(0,10)>=kasFrom && (it.created_at||'').slice(0,10)<=kasTo);
@@ -1398,9 +1400,23 @@ function renderKasBodyKas(body){
         <div style="font-weight:600">${formatRupiah(k.totalNilaiStok)}</div>
       </div>
       <div class="list-item">
+        <div class="name" style="flex:1">+ Piutang (Hutang Belum Lunas)</div>
+        <div style="font-weight:600">${formatRupiah(k.totalPiutang)}</div>
+      </div>
+      <div class="list-item">
         <div class="name" style="flex:1">– Total Laba</div>
         <div style="font-weight:600">${formatRupiah(k.totalLaba)}</div>
       </div>
+      ${k.biayaOperasional>0 ? `
+      <div class="list-item">
+        <div class="name" style="flex:1">+ Biaya Operasional</div>
+        <div style="font-weight:600">${formatRupiah(k.biayaOperasional)}</div>
+      </div>` : ''}
+      ${k.totalPrive>0 ? `
+      <div class="list-item">
+        <div class="name" style="flex:1">+ Prive</div>
+        <div style="font-weight:600">${formatRupiah(k.totalPrive)}</div>
+      </div>` : ''}
       <div class="list-item" style="border-top:2px solid var(--border);border-bottom:none;margin-top:2px;padding-top:12px">
         <div class="name" style="flex:1">Modal Saat Ini</div>
         <div style="font-weight:700;font-size:18px;color:${k.modalSaatIni>=0?'var(--green-700)':'var(--danger)'}">${formatRupiah(k.modalSaatIni)}</div>
@@ -1409,7 +1425,7 @@ function renderKasBodyKas(body){
     <div class="card" style="margin-top:12px">
       <div class="card-title">Piutang</div>
       <div style="font-size:20px;font-weight:700">${formatRupiah(k.totalPiutang)}</div>
-      <p class="muted" style="margin-top:4px">Murni catatan hutang pelanggan yang belum bayar — tidak ikut dihitung di Modal/Laba di atas.</p>
+      <p class="muted" style="margin-top:4px">Hutang pelanggan yang belum bayar. Barang sudah keluar dari stok tapi uangnya belum masuk kas, jadi ini dihitung sebagai aset tersendiri — sudah ikut ditambahkan di perhitungan Modal Saat Ini di atas.</p>
     </div>
     <div class="card" style="margin-top:12px">
       <div class="row"><div class="card-title" style="margin-bottom:0">Arus Kas</div></div>
@@ -1808,10 +1824,12 @@ function unduhLaporanTokoWord(){
       <tr><th style="width:50%">Pos</th><th style="width:50%">Nominal</th></tr>
       <tr><td>Saldo Kas</td><td>${formatRupiah(k.totalSaldoKas)}</td></tr>
       <tr><td>Nilai Stok</td><td>${formatRupiah(k.totalNilaiStok)}</td></tr>
+      <tr><td>Piutang (Hutang Belum Lunas)</td><td>${formatRupiah(k.totalPiutang)}</td></tr>
       <tr><td>Total Laba (kumulatif)</td><td>${formatRupiah(k.totalLaba)}</td></tr>
+      ${k.biayaOperasional>0 ? `<tr><td>Biaya Operasional (kumulatif)</td><td>${formatRupiah(k.biayaOperasional)}</td></tr>` : ''}
+      ${k.totalPrive>0 ? `<tr><td>Prive (kumulatif)</td><td>${formatRupiah(k.totalPrive)}</td></tr>` : ''}
       <tr><td><b>Modal Saat Ini</b></td><td><b>${formatRupiah(k.modalSaatIni)}</b></td></tr>
-      <tr><td>Piutang (belum lunas)</td><td>${formatRupiah(k.totalPiutang)}</td></tr>
-      <tr><td>Modal Awal</td><td>${formatRupiah(k.modalAwal)}</td></tr>
+      <tr><td>Modal Awal (Kas Awal)</td><td>${formatRupiah(k.modalAwal)}</td></tr>
     </table>
 
     <div class="section-title">Arus Kas &amp; Laba (Periode: ${kasFrom} s.d. ${kasTo})</div>
