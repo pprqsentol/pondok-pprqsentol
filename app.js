@@ -1290,7 +1290,7 @@ function renderLaporanAbsensi(santri){
 let kasFrom = '', kasTo = todayStr();
 let laporanTokoTab = 'kas'; // 'kas' | 'laba'
 let KAS_DATA = null;
-const KAS_LOKASI_DEFAULT = 'Utama'; // nilai lokasi tetap untuk baris baru (kolom lokasi tidak dipakai lagi di UI)
+const KAS_LOKASI_DEFAULT = 'Pondok'; // harus sama persis dengan nilai "lokasi" yang dipakai aplikasi kasir toko
 
 function formatRupiah(n){
   return 'Rp' + Math.round(n||0).toLocaleString('id-ID');
