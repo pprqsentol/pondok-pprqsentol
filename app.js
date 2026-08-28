@@ -1263,7 +1263,7 @@ function renderLaporanAbsensi(santri){
 
 /* ---------- LAPORAN TOKO: sub-tab KAS & LABA ======
    Mengambil data dari tabel yang sama dipakai aplikasi kasir toko:
-   kas_awal (modal awal), mutasi_kas (kas masuk/keluar),
+   pengaturan_kas (modal awal, lewat kolom kas_awal), kas_mutasi (kas masuk/keluar),
    produk (untuk nilai stok & harga jual/beli), transaksi_toko (penjualan).
    Catatan: kolom "lokasi" pada tabel-tabel ini sudah tidak dipakai untuk
    memisahkan data (dulu per toko/lokasi) — sekarang semua digabung jadi satu
@@ -1272,14 +1272,12 @@ function renderLaporanAbsensi(santri){
    -- Sub-tab KAS (posisi keuangan saat ini, tidak terikat periode) --
    Saldo Kas  = modal awal + kas masuk - kas keluar (semua digabung, tanpa pisah lokasi)
    Nilai Stok = jumlah (stok x harga beli) semua produk
+   Piutang    = total transaksi dengan metode Hutang yang belum lunas
    Total Laba = total laba kotor kumulatif dari SELURUH transaksi penjualan (all-time)
-   Modal Saat Ini = Saldo Kas + Nilai Stok - Total Laba
+   Modal Saat Ini = Saldo Kas + Nilai Stok + Piutang - Total Laba
    (Modal Saat Ini seharusnya stabil dari waktu ke waktu; kalau tiba-tiba turun
     sendiri di luar Prive/Biaya Operasional yang dicatat, tandanya ada barang
     hilang/susut atau salah catat.)
-   Piutang    = total transaksi dengan metode Hutang yang belum lunas.
-                Ini murni catatan hutang pelanggan, TIDAK ikut dihitung di
-                Saldo Kas / Nilai Stok / Total Laba / Modal Saat Ini di atas.
 
    -- Sub-tab LABA (arus laba dalam rentang tanggal terpilih) --
    Omzet       = total nilai semua transaksi penjualan dalam periode
@@ -1300,8 +1298,8 @@ function formatRupiah(n){
 async function loadKasData(){
   try {
     const [kasAwalRes, mutasiRes, produkRes, transaksiRes] = await Promise.all([
-      sb.from('kas_awal').select('*'),
-      sb.from('mutasi_kas').select('*'),
+      sb.from('pengaturan_kas').select('*'),
+      sb.from('kas_mutasi').select('*'),
       sb.from('produk').select('id,stok,harga_beli,harga_jual'),
       sb.from('transaksi_toko').select('id,items,total,metode,status_bayar,created_at')
     ]);
@@ -1329,7 +1327,7 @@ function labaKotorTransaksi(t, produkMap){
   }, 0);
 }
 function hitungKas(){
-  const modalAwal = KAS_DATA.kasAwal.reduce((s,k)=>s+Number(k.nominal||0),0);
+  const modalAwal = KAS_DATA.kasAwal.reduce((s,k)=>s+Number(k.kas_awal||0),0);
   const kasMasuk = KAS_DATA.mutasi.filter(m=>m.arah==='masuk').reduce((s,m)=>s+Number(m.jumlah),0);
   const kasKeluar = KAS_DATA.mutasi.filter(m=>m.arah==='keluar').reduce((s,m)=>s+Number(m.jumlah),0);
   const totalSaldoKas = modalAwal + kasMasuk - kasKeluar;
@@ -1340,9 +1338,9 @@ function hitungKas(){
   KAS_DATA.produk.forEach(p=>{ produkMap[p.id] = p; });
   const totalLaba = KAS_DATA.transaksiToko.reduce((s,t)=>s+labaKotorTransaksi(t, produkMap), 0);
 
-  const modalSaatIni = totalSaldoKas + totalNilaiStok - totalLaba;
-
   const totalPiutang = KAS_DATA.transaksiToko.filter(t=>t.metode==='Hutang' && t.status_bayar==='belum_bayar').reduce((s,t)=>s+Number(t.total),0);
+
+  const modalSaatIni = totalSaldoKas + totalNilaiStok + totalPiutang - totalLaba;
 
   const masukPeriode = KAS_DATA.mutasi.filter(m=>m.arah==='masuk' && (m.tanggal||'').slice(0,10)>=kasFrom && (m.tanggal||'').slice(0,10)<=kasTo).reduce((s,m)=>s+Number(m.jumlah),0);
   const keluarPeriode = KAS_DATA.mutasi.filter(m=>m.arah==='keluar' && (m.tanggal||'').slice(0,10)>=kasFrom && (m.tanggal||'').slice(0,10)<=kasTo).reduce((s,m)=>s+Number(m.jumlah),0);
@@ -1401,7 +1399,7 @@ function renderKasBodyKas(body){
     </div>
     <div class="card" style="margin-top:12px">
       <div class="card-title">Modal</div>
-      <p class="muted" style="margin-top:-6px;margin-bottom:10px">Modal = uang tunai + nilai barang di rak, dikeluarkan dari laba yang sudah dihasilkan. Angka ini seharusnya <b>stabil</b> dari waktu ke waktu — kalau tiba-tiba turun sendiri (di luar Prive/Biaya Operasional yang kamu catat), itu tanda ada barang hilang/susut atau salah catat.</p>
+      <p class="muted" style="margin-top:-6px;margin-bottom:10px">Modal = uang tunai + nilai barang di rak + piutang pelanggan, dikeluarkan dari laba yang sudah dihasilkan. Angka ini seharusnya <b>stabil</b> dari waktu ke waktu — kalau tiba-tiba turun sendiri (di luar Prive/Biaya Operasional yang kamu catat), itu tanda ada barang hilang/susut atau salah catat.</p>
       <div class="list-item">
         <div class="name" style="flex:1">Saldo Kas</div>
         <div style="font-weight:600">${formatRupiah(k.totalSaldoKas)}</div>
@@ -1409,6 +1407,10 @@ function renderKasBodyKas(body){
       <div class="list-item">
         <div class="name" style="flex:1">+ Nilai Stok</div>
         <div style="font-weight:600">${formatRupiah(k.totalNilaiStok)}</div>
+      </div>
+      <div class="list-item">
+        <div class="name" style="flex:1">+ Piutang</div>
+        <div style="font-weight:600">${formatRupiah(k.totalPiutang)}</div>
       </div>
       <div class="list-item">
         <div class="name" style="flex:1">– Total Laba</div>
@@ -1422,7 +1424,7 @@ function renderKasBodyKas(body){
     <div class="card" style="margin-top:12px">
       <div class="card-title">Piutang</div>
       <div style="font-size:20px;font-weight:700">${formatRupiah(k.totalPiutang)}</div>
-      <p class="muted" style="margin-top:4px">Murni catatan hutang pelanggan yang belum bayar — tidak ikut dihitung di Modal/Laba di atas.</p>
+      <p class="muted" style="margin-top:4px">Catatan hutang pelanggan yang belum bayar — sudah ikut ditambahkan ke Modal Saat Ini di atas.</p>
     </div>
     <div class="card" style="margin-top:12px">
       <div class="row"><div class="card-title" style="margin-bottom:0">Arus Kas</div><button class="btn btn-sm btn-accent" onclick="openMutasiKasForm()">+ Catat</button></div>
@@ -1499,13 +1501,13 @@ async function saveMutasiKas(){
     catatan: val('f_kasCatatan') || null,
     dicatat_oleh: SESSION.nama || null
   };
-  const { error } = await sb.from('mutasi_kas').insert(row);
+  const { error } = await sb.from('kas_mutasi').insert(row);
   if(error){ alert('Gagal menyimpan: ' + error.message); return; }
   closeModal();
   renderKasBody();
 }
 function openKasAwalForm(){
-  const totalSaatIni = KAS_DATA.kasAwal.reduce((s,k)=>s+Number(k.nominal||0),0);
+  const totalSaatIni = KAS_DATA.kasAwal.reduce((s,k)=>s+Number(k.kas_awal||0),0);
   showModal('Modal Awal', `
     <label>Modal awal (Rp)</label>
     <input id="f_kasAwalNominal" type="number" min="0" value="${totalSaatIni}">
@@ -1519,17 +1521,17 @@ async function saveKasAwal(){
   if(OFFLINE_MODE){ alert('Sedang mode offline (tidak ada internet). Data tidak bisa disimpan sekarang.'); return; }
   const rows = KAS_DATA.kasAwal;
   if(rows.length === 0){
-    const { error } = await sb.from('kas_awal').insert({ lokasi: KAS_LOKASI_DEFAULT, nominal });
+    const { error } = await sb.from('pengaturan_kas').insert({ lokasi: KAS_LOKASI_DEFAULT, kas_awal: nominal });
     if(error){ alert('Gagal menyimpan: ' + error.message); return; }
   } else {
     // Semua digabung jadi satu angka saja: simpan nilai baru di baris pertama,
     // nolkan baris lain (peninggalan dari saat data masih dipisah per lokasi).
     const [first, ...rest] = rows;
-    const { error: e1 } = await sb.from('kas_awal').update({ nominal }).eq('lokasi', first.lokasi);
+    const { error: e1 } = await sb.from('pengaturan_kas').update({ kas_awal: nominal }).eq('lokasi', first.lokasi);
     if(e1){ alert('Gagal menyimpan: ' + e1.message); return; }
     for(const r of rest){
-      if(Number(r.nominal) !== 0){
-        await sb.from('kas_awal').update({ nominal: 0 }).eq('lokasi', r.lokasi);
+      if(Number(r.kas_awal) !== 0){
+        await sb.from('pengaturan_kas').update({ kas_awal: 0 }).eq('lokasi', r.lokasi);
       }
     }
   }
@@ -1891,9 +1893,9 @@ function unduhLaporanTokoWord(){
       <tr><th style="width:50%">Pos</th><th style="width:50%">Nominal</th></tr>
       <tr><td>Saldo Kas</td><td>${formatRupiah(k.totalSaldoKas)}</td></tr>
       <tr><td>Nilai Stok</td><td>${formatRupiah(k.totalNilaiStok)}</td></tr>
+      <tr><td>Piutang (belum lunas)</td><td>${formatRupiah(k.totalPiutang)}</td></tr>
       <tr><td>Total Laba (kumulatif)</td><td>${formatRupiah(k.totalLaba)}</td></tr>
       <tr><td><b>Modal Saat Ini</b></td><td><b>${formatRupiah(k.modalSaatIni)}</b></td></tr>
-      <tr><td>Piutang (belum lunas)</td><td>${formatRupiah(k.totalPiutang)}</td></tr>
       <tr><td>Modal Awal</td><td>${formatRupiah(k.modalAwal)}</td></tr>
     </table>
 
