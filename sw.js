@@ -1,4 +1,4 @@
-const CACHE = 'pondok-rq-v16-piutang-di-modal';
+const CACHE = 'pondok-rq-v20-tampil-error-refresh';
 const FILES = [
   './',
   './index.html',

@@ -390,7 +390,8 @@ async function refreshData(){
     syncTopbarHeight();
   }catch(e){
     console.error('Gagal memuat ulang data:', e);
-    alert('Gagal memuat ulang data. Cek koneksi internet lalu coba lagi.');
+    const pesan = (e && (e.message || e.details || e.hint)) || JSON.stringify(e);
+    alert('Gagal memuat ulang data:\n' + pesan);
   }finally{
     if(btn) btn.classList.remove('spinning');
   }
@@ -652,17 +653,28 @@ async function saveSantri(id, isNew){
 function buatKodeLoginBaru(){
   return String(Math.floor(100000 + Math.random()*900000));
 }
-/* Untuk data santri lama (dibuat sebelum fitur kode wali ada) yang belum punya kode wali. */
+/* Untuk data santri lama (dibuat sebelum fitur kode wali ada) yang belum punya kode wali.
+   Sama-sama lewat Edge Function reset-kode-wali, supaya akun Auth wali_santri-nya
+   ikut dibuat/disamakan sekalian (tidak cuma update kolom kode_wali doang). */
 async function buatKodeWaliSantriLama(id){
-  for(let i=0;i<5;i++){
-    const kodeWali = buatKodeLoginBaru();
-    const { error } = await sb.from('santri').update({ kode_wali: kodeWali }).eq('id', id);
-    if(!error){ await loadAll(); openSantriDetail(id); return; }
-    if(!(''+error.message).toLowerCase().includes('duplicate')){
-      alert('Gagal membuat kode wali: ' + error.message); return;
-    }
+  return resetKodeWali(id, {konfirmasi:false});
+}
+/* Cabut kartu wali lama & terbitkan kode wali baru (dipakai juga untuk membuatkan
+   kode wali pertama kali pada santri lama). Kartu lama otomatis tidak berlaku begitu
+   kode baru tersimpan. */
+async function resetKodeWali(id, {konfirmasi=true}={}){
+  if(konfirmasi && !window.confirm('Kartu wali yang lama akan langsung tidak berlaku begitu kode barunya dibuat. Lanjutkan?')){
+    return;
   }
-  alert('Gagal membuat kode wali unik, coba tekan tombol sekali lagi.');
+  const { data, error } = await sb.functions.invoke('reset-kode-wali', { body: { santri_id: id } });
+  if(error || data?.error){
+    alert('Gagal membuat/reset kode wali: ' + (data?.error || error.message));
+    return;
+  }
+  await loadAll();
+  openSantriDetail(id);
+  alert(`Kode wali baru: ${data.data.kode_wali_baru}\nSilakan cetak ulang kartu wali.`);
+  openCardWali(id);
 }
 async function deleteSantri(id){
   if(!confirm('Hapus data santri ini?')) return;
@@ -730,7 +742,7 @@ function openSantriDetail(id){
           <tr><th>Nama ibu</th><td>${escapeHtml(s.namaIbu)||'-'}</td></tr>
           <tr><th>Nama wali</th><td>${escapeHtml(s.namaWali)||'-'}</td></tr>
           <tr><th>No. HP wali</th><td>${escapeHtml(s.hpWali)||'-'}</td></tr>
-          <tr><th>Kode wali</th><td>${s.kodeWali ? `<b style="font-size:15px;letter-spacing:1px">${s.kodeWali}</b> <span class="muted">(untuk login Aplikasi Wali)</span>` : `<button class="btn btn-sm" onclick="buatKodeWaliSantriLama('${s.id}')">Buat kode wali</button>`}</td></tr>
+          <tr><th>Kode wali</th><td>${s.kodeWali ? `<b style="font-size:15px;letter-spacing:1px">${s.kodeWali}</b> <span class="muted">(untuk login Aplikasi Wali)</span> <button class="btn btn-sm btn-danger" onclick="resetKodeWali('${s.id}')">Cabut &amp; buat kode baru</button>` : `<button class="btn btn-sm" onclick="buatKodeWaliSantriLama('${s.id}')">Buat kode wali</button>`}</td></tr>
         </table></div>
       </div>
       <div class="card">
@@ -958,7 +970,7 @@ function openCardWali(santriId){
   if(!s.kodeWali){
     showModal('Kartu Wali Santri', `
       <p class="muted">Santri ini belum punya kode wali (data lama sebelum fitur ini ada). Buat dulu kode walinya, baru kartu bisa dicetak.</p>
-      <div class="btn-row"><button class="btn btn-accent" onclick="buatKodeWaliSantriLama('${s.id}').then(()=>openCardWali('${s.id}'))">Buat kode wali</button></div>
+      <div class="btn-row"><button class="btn btn-accent" onclick="buatKodeWaliSantriLama('${s.id}')">Buat kode wali</button></div>
     `);
     return;
   }
@@ -1301,7 +1313,10 @@ async function loadKasData(){
       sb.from('pengaturan_kas').select('*'),
       sb.from('kas_mutasi').select('*'),
       sb.from('produk').select('id,stok,harga_beli,harga_jual'),
-      sb.from('transaksi_toko').select('id,items,total,metode,status_bayar,created_at')
+      // Pakai select('*') (bukan sebut nama kolom satu-satu) — sama seperti cara Aplikasi Kasir Toko
+      // membaca tabel ini — supaya query tidak gagal total kalau ada kolom yang namanya sedikit beda
+      // dari dugaan (field yang tidak dipakai di sini cukup diabaikan, bukan bikin error).
+      sb.from('transaksi_toko').select('*')
     ]);
     if(kasAwalRes.error) throw kasAwalRes.error;
     if(mutasiRes.error) throw mutasiRes.error;
@@ -1315,7 +1330,9 @@ async function loadKasData(){
     };
   } catch(e){
     console.error('Gagal memuat data laporan toko:', e);
-    KAS_DATA = 'error';
+    // Simpan pesan error ASLI dari Supabase (bukan tulisan generik) supaya kelihatan langsung di
+    // layar HP — admin bisa screenshot tanpa perlu buka console browser di laptop.
+    KAS_DATA = { error: true, pesan: (e && (e.message || e.details || e.hint)) || JSON.stringify(e) };
   }
 }
 function labaKotorTransaksi(t, produkMap){
@@ -1328,17 +1345,31 @@ function labaKotorTransaksi(t, produkMap){
 }
 function hitungKas(){
   const modalAwal = KAS_DATA.kasAwal.reduce((s,k)=>s+Number(k.kas_awal||0),0);
+  // Baris manual di kas_mutasi (setor modal, beli stok, operasional, prive, lainnya) — diinput dari
+  // aplikasi Kasir Toko lewat tab Kas.
   const kasMasuk = KAS_DATA.mutasi.filter(m=>m.arah==='masuk').reduce((s,m)=>s+Number(m.jumlah),0);
   const kasKeluar = KAS_DATA.mutasi.filter(m=>m.arah==='keluar').reduce((s,m)=>s+Number(m.jumlah),0);
-  const totalSaldoKas = modalAwal + kasMasuk - kasKeluar;
+
+  // Uang masuk OTOMATIS dari penjualan (tunai/bayar saldo) & pelunasan hutang — di aplikasi Kasir Toko
+  // ini SENGAJA tidak ditulis ke tabel kas_mutasi (supaya tidak dobel catat), jadi harus dihitung di sini
+  // langsung dari transaksi_toko, persis seperti logika daftarMutasiKas() di aplikasi Kasir Toko, supaya
+  // Saldo Kas & Modal di kedua aplikasi selalu selaras (aplikasi Pondok hanya melihat, input tetap di Kasir Toko).
+  const transaksiAktif = KAS_DATA.transaksiToko.filter(t=>!t.dibatalkan);
+  const kasMasukOtomatis = transaksiAktif.reduce((s,t)=>{
+    if(t.metode==='Tunai' || t.metode==='Saldo') return s + Number(t.total||0);
+    if(t.metode==='Hutang' && t.status_bayar==='lunas') return s + Number(t.total||0);
+    return s;
+  }, 0);
+
+  const totalSaldoKas = modalAwal + kasMasuk - kasKeluar + kasMasukOtomatis;
 
   const totalNilaiStok = KAS_DATA.produk.reduce((s,p)=>s+Number(p.stok)*Number(p.harga_beli),0);
 
   const produkMap = {};
   KAS_DATA.produk.forEach(p=>{ produkMap[p.id] = p; });
-  const totalLaba = KAS_DATA.transaksiToko.reduce((s,t)=>s+labaKotorTransaksi(t, produkMap), 0);
+  const totalLaba = transaksiAktif.reduce((s,t)=>s+labaKotorTransaksi(t, produkMap), 0);
 
-  const totalPiutang = KAS_DATA.transaksiToko.filter(t=>t.metode==='Hutang' && t.status_bayar==='belum_bayar').reduce((s,t)=>s+Number(t.total),0);
+  const totalPiutang = transaksiAktif.filter(t=>t.metode==='Hutang' && t.status_bayar==='belum_bayar').reduce((s,t)=>s+Number(t.total),0);
 
   const modalSaatIni = totalSaldoKas + totalNilaiStok + totalPiutang - totalLaba;
 
@@ -1350,7 +1381,9 @@ function hitungKas(){
 function hitungLaba(){
   const produkMap = {};
   KAS_DATA.produk.forEach(p=>{ produkMap[p.id] = p; });
-  const transaksiPeriode = KAS_DATA.transaksiToko.filter(t=>(t.created_at||'').slice(0,10)>=kasFrom && (t.created_at||'').slice(0,10)<=kasTo);
+  // Pakai kolom "tanggal" (bukan created_at) dan buang transaksi yang dibatalkan — supaya
+  // periode & filter batal selalu selaras dengan Laporan di aplikasi Kasir Toko.
+  const transaksiPeriode = KAS_DATA.transaksiToko.filter(t=>!t.dibatalkan && (t.tanggal||'').slice(0,10)>=kasFrom && (t.tanggal||'').slice(0,10)<=kasTo);
   const omzet = transaksiPeriode.reduce((s,t)=>s+Number(t.total),0);
   const labaTunai = transaksiPeriode.filter(t=>t.metode==='Tunai'||t.metode==='Saldo').reduce((s,t)=>s+labaKotorTransaksi(t, produkMap),0);
   const labaKredit = transaksiPeriode.filter(t=>t.metode==='Hutang').reduce((s,t)=>s+labaKotorTransaksi(t, produkMap),0);
@@ -1384,8 +1417,8 @@ async function renderKasBody(){
   await loadKasData();
   const body = document.getElementById('kasBody');
   if(!body) return; // pengguna sudah pindah halaman sebelum data selesai dimuat
-  if(KAS_DATA==='error'){
-    body.innerHTML = `<p class="muted" style="color:var(--danger)">Gagal memuat data. Periksa koneksi internet.</p><button class="btn" onclick="renderKasBody()">Muat Ulang</button>`;
+  if(KAS_DATA && KAS_DATA.error){
+    body.innerHTML = `<p class="muted" style="color:var(--danger)">Gagal memuat data.<br><span style="font-size:12px;font-family:monospace;word-break:break-all;">${escapeHtml(KAS_DATA.pesan||'')}</span></p><button class="btn" onclick="renderKasBody()">Muat Ulang</button>`;
     return;
   }
   if(laporanTokoTab==='laba') renderLabaBody(body); else renderKasBodyKas(body);
@@ -1880,7 +1913,7 @@ function unduhDetailSantriWord(santriId){
 
 /* ---- 3. Laporan Toko (posisi kas + arus kas & laba periode) ---- */
 function unduhLaporanTokoWord(){
-  if(!KAS_DATA || KAS_DATA==='error'){ alert('Data belum siap dimuat, coba lagi sebentar.'); return; }
+  if(!KAS_DATA || KAS_DATA.error){ alert('Data belum siap dimuat, coba lagi sebentar.'); return; }
   const k = hitungKas();
   const l = hitungLaba();
   const tglCetak = new Date().toLocaleDateString('id-ID', { day:'numeric', month:'long', year:'numeric' });
