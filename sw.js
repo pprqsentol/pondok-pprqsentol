@@ -1,4 +1,4 @@
-const CACHE = 'pondok-rq-v20-tampil-error-refresh';
+const CACHE = 'pondok-rq-v21-fix-logo-bulat-unduh';
 const FILES = [
   './',
   './index.html',
