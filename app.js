@@ -942,7 +942,7 @@ function openCardSantri(santriId){
   showModal('Kartu Santri', `
     <div id="printArea">
       <div class="id-card">
-        <div class="head"><div class="head-logo"><img src="icon-192.png"></div><div class="pn">KARTU SANTRI &middot; PPRQ SENTOL</div></div>
+        <div class="head"><div class="head-logo" style="width:38px;height:38px;overflow:hidden;border-radius:50%"><img src="icon-192.png" width="38" height="38" style="width:38px;height:38px;object-fit:cover;display:block;border-radius:50%"></div><div class="pn">KARTU SANTRI &middot; PPRQ SENTOL</div></div>
         <div class="body">
           <div class="left">
             ${s.foto?`<img class="photo" src="${s.foto}">`:`<div class="photo"></div>`}
@@ -977,7 +977,7 @@ function openCardWali(santriId){
   showModal('Kartu Wali Santri', `
     <div id="printArea">
       <div class="id-card id-card-wali">
-        <div class="head"><div class="head-logo"><img src="icon-192.png"></div><div class="pn">KARTU WALI SANTRI &middot; PPRQ SENTOL</div></div>
+        <div class="head"><div class="head-logo" style="width:38px;height:38px;overflow:hidden;border-radius:50%"><img src="icon-192.png" width="38" height="38" style="width:38px;height:38px;object-fit:cover;display:block;border-radius:50%"></div><div class="pn">KARTU WALI SANTRI &middot; PPRQ SENTOL</div></div>
         <div class="body">
           <div class="left">
             ${s.fotoWali?`<img class="photo" src="${s.fotoWali}">`:`<div class="photo photo-placeholder">&#128100;</div>`}
@@ -1007,7 +1007,7 @@ function openCardMahram(santriId, idx){
   showModal('Kartu Mahram', `
     <div id="printArea">
       <div class="id-card id-card-mahram">
-        <div class="head"><div class="head-logo"><img src="icon-192.png"></div><div class="pn">KARTU MAHRAM &middot; PPRQ SENTOL</div></div>
+        <div class="head"><div class="head-logo" style="width:38px;height:38px;overflow:hidden;border-radius:50%"><img src="icon-192.png" width="38" height="38" style="width:38px;height:38px;object-fit:cover;display:block;border-radius:50%"></div><div class="pn">KARTU MAHRAM &middot; PPRQ SENTOL</div></div>
         <div class="body">
           <div class="left">
             ${m.foto?`<img class="photo" src="${m.foto}">`:`<div class="photo"></div>`}

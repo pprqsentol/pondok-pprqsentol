@@ -1,4 +1,4 @@
-const CACHE = 'pondok-rq-v21-fix-logo-bulat-unduh';
+const CACHE = 'pondok-rq-v23-fix-sw-network-first';
 const FILES = [
   './',
   './index.html',
@@ -26,16 +26,19 @@ self.addEventListener('fetch', e=>{
   if (e.request.method !== 'GET' || url.origin !== self.location.origin) {
     return;
   }
+  /* Network-first (bukan stale-while-revalidate lagi): selalu ambil file
+     TERBARU dari server dulu selama ada internet, cache cuma dipakai kalau
+     offline. Ini supaya app.js, styles.css, dll selalu satu paket versi yang
+     sama persis -- sebelumnya file-file ini bisa ter-update satu-satu secara
+     terpisah di cache, jadi ada kemungkinan sesaat setelah deploy baru,
+     pengguna dapat CAMPURAN file lama+baru yang tidak nyambung. */
   e.respondWith(
-    caches.match(e.request).then(cached=>{
-      const fetchPromise = fetch(e.request).then(res=>{
-        if(res.ok){
-          const copy = res.clone();
-          caches.open(CACHE).then(c=>c.put(e.request, copy));
-        }
-        return res;
-      }).catch(()=>cached);
-      return cached || fetchPromise;
-    })
+    fetch(e.request).then(res=>{
+      if(res.ok){
+        const copy = res.clone();
+        caches.open(CACHE).then(c=>c.put(e.request, copy));
+      }
+      return res;
+    }).catch(()=>caches.match(e.request))
   );
 });
