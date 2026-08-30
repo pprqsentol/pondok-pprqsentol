@@ -677,8 +677,8 @@ async function resetKodeWali(id, {konfirmasi=true}={}){
   openCardWali(id);
 }
 async function deleteSantri(id){
-  if(!confirm('Hapus data santri ini?')) return;
-  const { error } = await sb.from('santri').delete().eq('id', id);
+  if(!confirm('Hapus data santri ini secara permanen? Riwayat transaksi, tagihan, iuran, absensi, hafalan, dan akun wali santri ini akan ikut terhapus. Tindakan ini tidak bisa dibatalkan.')) return;
+  const { error } = await sb.rpc('hapus_santri_permanen', { p_santri_id: id });
   if(error){ alert('Gagal menghapus: ' + error.message); return; }
   await loadAll();
   closeModal();
