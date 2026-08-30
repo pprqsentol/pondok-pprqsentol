@@ -677,8 +677,8 @@ async function resetKodeWali(id, {konfirmasi=true}={}){
   openCardWali(id);
 }
 async function deleteSantri(id){
-  if(!confirm('Hapus data santri ini secara permanen? Riwayat transaksi, tagihan, iuran, absensi, hafalan, dan akun wali santri ini akan ikut terhapus. Tindakan ini tidak bisa dibatalkan.')) return;
-  const { error } = await sb.rpc('hapus_santri_permanen', { p_santri_id: id });
+  if(!confirm('Hapus data santri ini?')) return;
+  const { error } = await sb.from('santri').delete().eq('id', id);
   if(error){ alert('Gagal menghapus: ' + error.message); return; }
   await loadAll();
   closeModal();
@@ -1381,9 +1381,11 @@ function hitungKas(){
 function hitungLaba(){
   const produkMap = {};
   KAS_DATA.produk.forEach(p=>{ produkMap[p.id] = p; });
-  // Pakai kolom "tanggal" (bukan created_at) dan buang transaksi yang dibatalkan — supaya
-  // periode & filter batal selalu selaras dengan Laporan di aplikasi Kasir Toko.
-  const transaksiPeriode = KAS_DATA.transaksiToko.filter(t=>!t.dibatalkan && (t.tanggal||'').slice(0,10)>=kasFrom && (t.tanggal||'').slice(0,10)<=kasTo);
+  // PENTING: tabel transaksi_toko TIDAK punya kolom "tanggal" — kolom tanggalnya bernama
+  // created_at (persis seperti cara Aplikasi Kasir Toko sendiri membaca tabel ini, lihat
+  // mapTransaksiTokoDariSupabase/mapTransaksiItemDariSupabase di app Toko). Buang transaksi
+  // yang dibatalkan — supaya periode & filter batal selalu selaras dengan Laporan di app Toko.
+  const transaksiPeriode = KAS_DATA.transaksiToko.filter(t=>!t.dibatalkan && (t.created_at||'').slice(0,10)>=kasFrom && (t.created_at||'').slice(0,10)<=kasTo);
   const omzet = transaksiPeriode.reduce((s,t)=>s+Number(t.total),0);
   const labaTunai = transaksiPeriode.filter(t=>t.metode==='Tunai'||t.metode==='Saldo').reduce((s,t)=>s+labaKotorTransaksi(t, produkMap),0);
   const labaKredit = transaksiPeriode.filter(t=>t.metode==='Hutang').reduce((s,t)=>s+labaKotorTransaksi(t, produkMap),0);
