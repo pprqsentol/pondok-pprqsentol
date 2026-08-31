@@ -73,8 +73,10 @@ function santriAppToRow(s) {
     hafalan_awal: s.hafalanAwal || 0
   };
 }
-/* Total hafalan berjalan = hafalan awal (sebelum pakai aplikasi) + seluruh hafalan yang diinput lewat aplikasi.
-   1 juz = 20 halaman (hitungan internal pondok). */
+/* Total hafalan berjalan = hafalan awal (sebelum pakai aplikasi, sudah dikonversi ke posisi
+   urutan hafalan lewat pagesFromJuzAwal) + seluruh hafalan yang diinput lewat aplikasi.
+   1 juz = 20 halaman (hitungan internal pondok). Hasil "juz" di sini adalah JUMLAH juz yang
+   sudah dihafal (mengikuti urutan 29,30,1,2,...,28), BUKAN nomor juz yang sedang dihafal. */
 function totalHafalanSantri(santriId){
   const s = DB.santri.find(x=>x.id===santriId);
   const awal = s ? (s.hafalanAwal||0) : 0;
@@ -121,6 +123,23 @@ function nilaiAbsensiSantri(santriId, from, to){
 const JUZ_ORDER = [29, 30, ...Array.from({length:28}, (_,i)=>i+1)];
 function posisiJuz(juz){ return JUZ_ORDER.indexOf(juz) + 1; } // posisi ke-berapa (1..30) dalam urutan hafalan
 function juzSetelah(juz){ const p = posisiJuz(juz); return JUZ_ORDER[p % JUZ_ORDER.length]; } // juz berikutnya (mengikuti urutan, berputar setelah 28)
+/* "Hafalan Awal" (progres sebelum pakai aplikasi) diisi dengan NOMOR JUZ TERAKHIR YANG SUDAH
+   TUNTAS dihafal (mis. Juz 18) + halaman ke berapa progres di juz SETELAHNYA. Nomor juz itu
+   harus dikonversi memakai POSISI-nya dalam JUZ_ORDER (urutan pondok: 29,30,1,2,...,28), bukan
+   nomor juznya langsung -- supaya "sudah tuntas s.d. Juz 18" (=29,30,1..18, 20 juz) dihitung
+   20 juz, bukan 18. pagesFromJuzAwal = simpan; juzAwalFromPages = kebalikannya (untuk form edit). */
+function pagesFromJuzAwal(juz, halaman){
+  if(!juz || juz<1) return 0;
+  return posisiJuz(juz)*20 + (halaman||0);
+}
+function juzAwalFromPages(totalPages){
+  const total = totalPages||0;
+  const jumlahJuzTuntas = Math.floor(total/20);
+  const halaman = total%20;
+  if(jumlahJuzTuntas<=0) return { juz: 0, halaman };
+  const idx = (jumlahJuzTuntas-1) % JUZ_ORDER.length;
+  return { juz: JUZ_ORDER[idx], halaman };
+}
 /* Juz yang sedang dihafal santri sekarang, berdasarkan input hafalan terakhir
    yang dicatat lewat aplikasi (hafalan awal/sebelum pakai aplikasi tidak dipakai
    di sini karena tidak diketahui juz persisnya, hanya total halamannya). */
@@ -549,8 +568,9 @@ function printSantriTable(){
 function openSantriForm(existing){
   const s = existing || {id:null, nama:'', noInduk:String(1000+DB.santri.length+1), foto:'', tetala:'', alamat:'', tglMasuk:todayStr(), jenisKelamin:'L', namaAyah:'', namaIbu:'', namaWali:'', fotoWali:'', kelas:'7', kamar:'', hpWali:'', program: !isAdmin()?SESSION.program:'Non-Takhossus', hafalanAwal:0};
   const isNew = !existing;
-  const juzAwal = Math.floor((s.hafalanAwal||0)/20);
-  const halAwal = (s.hafalanAwal||0)%20;
+  const konversiAwal = juzAwalFromPages(s.hafalanAwal||0);
+  const juzAwal = (s.hafalanAwal||0) > 0 ? konversiAwal.juz : 0;
+  const halAwal = (s.hafalanAwal||0) > 0 ? konversiAwal.halaman : 0;
   const optsN = (n, selected)=>Array.from({length:n+1},(_,i)=>i).map(v=>`<option value="${v}" ${v===selected?'selected':''}>${v}</option>`).join('');
   showModal('Data Santri', `
     <label>Foto profil</label>
@@ -590,7 +610,7 @@ function openSantriForm(existing){
     </div>
     <input type="hidden" id="f_program" value="${s.program}">
     <label>Total Hafalan Awal (sebelum pakai aplikasi ini)</label>
-    <p class="muted" style="margin:0 0 4px">1 juz = 20 halaman. Isi progres hafalan santri saat ini sebelum mulai dicatat lewat aplikasi.</p>
+    <p class="muted" style="margin:0 0 4px">1 juz = 20 halaman. Isi progres hafalan santri saat ini (nomor juz &amp; halaman terakhir yang sedang/sudah dihafal) sebelum mulai dicatat lewat aplikasi. Urutan hafalan pondok: Juz 29, 30, 1, 2, ... sampai 28 &mdash; jumlah juz akan otomatis dihitung sesuai urutan ini, bukan berdasarkan nomor juznya langsung.</p>
     <div class="grid2">
       <div><label>Juz</label><select id="f_juzAwal">${optsN(30, juzAwal)}</select></div>
       <div><label>Halaman ke-</label><select id="f_halAwal">${optsN(19, halAwal)}</select></div>
@@ -625,7 +645,7 @@ async function saveSantri(id, isNew){
     namaAyah: val('f_namaAyah'), namaIbu: val('f_namaIbu'),
     namaWali: val('f_namaWali'), fotoWali: val('f_fotoWali'),
     hpWali: val('f_hpWali'), program: val('f_program'),
-    hafalanAwal: parseInt(val('f_juzAwal'))*20 + parseInt(val('f_halAwal'))
+    hafalanAwal: pagesFromJuzAwal(parseInt(val('f_juzAwal')), parseInt(val('f_halAwal')))
   };
   if(!data.nama){ alert('Nama wajib diisi'); return; }
   if(OFFLINE_MODE){ alert('Sedang mode offline (tidak ada internet). Data tidak bisa disimpan sekarang.'); return; }
