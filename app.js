@@ -186,17 +186,18 @@ async function idbLoad(){
 }
 
 /* ====== 3. STATE APLIKASI (diisi dari Supabase setelah login) ====== */
-let DB = { kegiatan: [], santri: [], absensi: [], hafalan: [], transaksiSaldo: [], pembina: [] };
+let DB = { kegiatan: [], santri: [], absensi: [], hafalan: [], murojaah: [], transaksiSaldo: [], pembina: [] };
 let SESSION = null; // { userId, role, program, santriId, nama }
 
 async function loadAll() {
   try {
-    const [kegiatanRes, santriRes, mahramRes, absensiRes, hafalanRes, saldoRes, pembinaRes] = await Promise.all([
+    const [kegiatanRes, santriRes, mahramRes, absensiRes, hafalanRes, murojaahRes, saldoRes, pembinaRes] = await Promise.all([
       sb.from('kegiatan').select('*').eq('aktif', true).order('nama'),
       sb.from('santri').select('*').eq('aktif', true).order('nama'),
       sb.from('mahram').select('*'),
       sb.from('absensi').select('*'),
       sb.from('hafalan').select('*'),
+      sb.from('murojaah').select('*'),
       sb.from('transaksi_saldo').select('*'),
       sb.from('pembina').select('*').order('nama')
     ]);
@@ -216,8 +217,13 @@ async function loadAll() {
       hafalan: (hafalanRes.data || []).map(h => ({
         id: h.id, santriId: h.santri_id, tanggal: h.tanggal, juz: h.juz,
         halamanDari: h.halaman_dari, halamanSampai: h.halaman_sampai,
-        jumlahHalaman: h.halaman_sampai - h.halaman_dari + 1
+        jumlahHalaman: h.halaman_sampai - h.halaman_dari + 1,
+        kegiatanId: h.kegiatan_id || null
       })),
+      murojaah: (murojaahRes && !murojaahRes.error) ? (murojaahRes.data || []).map(m => ({
+        id: m.id, santriId: m.santri_id, kegiatanId: m.kegiatan_id, tanggal: m.tanggal,
+        juz: m.juz, cakupan: m.cakupan
+      })) : [],
       transaksiSaldo: (saldoRes.data || []).map(t => ({
         id: t.id, santriId: t.santri_id, jenis: t.jenis, nominal: t.jumlah,
         keterangan: t.keterangan || '', tanggal: t.tanggal
@@ -772,6 +778,7 @@ function renderRiwayatSantri(santriId){
   const s = DB.santri.find(x=>x.id===santriId);
   const keuangan = DB.transaksiSaldo.filter(t=>t.santriId===santriId && t.tanggal>=from && t.tanggal<=to).sort((a,b)=>b.tanggal.localeCompare(a.tanggal));
   const hafalan = DB.hafalan.filter(h=>h.santriId===santriId && h.tanggal>=from && h.tanggal<=to).sort((a,b)=>b.tanggal.localeCompare(a.tanggal));
+  const murojaah = DB.murojaah.filter(m=>m.santriId===santriId && m.tanggal>=from && m.tanggal<=to).sort((a,b)=>b.tanggal.localeCompare(a.tanggal));
   /* Riwayat absensi santri ini diambil dari data yang sama dipakai tab Absensi (DB.absensi),
      bukan tabel/sumber terpisah -- supaya selalu sinkron dengan yang diinput ustadz. */
   const absensi = DB.absensi.filter(a=>a.santriId===santriId && a.tanggal>=from && a.tanggal<=to).sort((a,b)=>b.tanggal.localeCompare(a.tanggal));
@@ -809,8 +816,14 @@ function renderRiwayatSantri(santriId){
     </div>
     <canvas id="chartSantriHafalan" width="600" height="180" style="width:100%;height:150px;margin-top:8px"></canvas>
     ${hafalan.length===0?'<p class="muted">Belum ada hafalan dicatat pada periode ini.</p>':`
-      <div class="table-wrap"><table><tr><th>Tanggal</th><th>Juz</th><th>Halaman</th></tr>
-      ${hafalan.map(h=>`<tr><td>${h.tanggal}</td><td>${h.juz}</td><td>${h.halamanDari===h.halamanSampai?h.halamanDari:h.halamanDari+'-'+h.halamanSampai}</td></tr>`).join('')}
+      <div class="table-wrap"><table><tr><th>Tanggal</th><th>Kegiatan</th><th>Juz</th><th>Halaman</th></tr>
+      ${hafalan.map(h=>`<tr><td>${h.tanggal}</td><td>${escapeHtml(namaKegiatan(h.kegiatanId))}</td><td>${h.juz}</td><td>${h.halamanDari===h.halamanSampai?h.halamanDari:h.halamanDari+'-'+h.halamanSampai}</td></tr>`).join('')}
+      </table></div>`}
+
+    <div class="section-heading">Riwayat Setoran 2 / Murojaah (periode ini)</div>
+    ${murojaah.length===0?'<p class="muted">Belum ada dicatat pada periode ini.</p>':`
+      <div class="table-wrap"><table><tr><th>Tanggal</th><th>Kegiatan</th><th>Juz</th><th>Cakupan</th></tr>
+      ${murojaah.map(m=>`<tr><td>${m.tanggal}</td><td>${escapeHtml(namaKegiatan(m.kegiatanId))}</td><td>${m.juz}</td><td>${escapeHtml(m.cakupan)}</td></tr>`).join('')}
       </table></div>`}
 
     <div class="section-heading">Riwayat Absensi (periode ini)</div>
