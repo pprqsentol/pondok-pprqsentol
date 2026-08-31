@@ -209,8 +209,8 @@ th{color:var(--muted);font-weight:600;font-size:12px;}
 .id-card .photo-placeholder{display:flex;align-items:center;justify-content:center;font-size:22px;color:#8aa38d;background:#e4ece3;}
 .id-card .info{font-size:8.5px;line-height:1.5;color:#233a2b;min-width:0;}
 .id-card .info .nm{font-size:11px;font-weight:800;margin-bottom:3px;color:#1f3327;white-space:normal;overflow:visible;text-overflow:unset;word-break:break-word;}
-.id-card .qr{flex:1;min-height:0;margin:4px 0 0;background:#fff;padding:6px;border-radius:10px;display:flex;align-items:flex-start;justify-content:center;box-shadow:0 1px 5px rgba(0,0,0,0.15);border:1px solid rgba(31,51,39,0.08);}
-.id-card .qr canvas,.id-card .qr img{width:100%!important;height:auto!important;max-width:150px;}
+.id-card .qr{flex:1;min-height:0;margin:4px 0 0;background:#fff;padding:6px;border-radius:10px;display:flex;align-items:center;justify-content:center;box-shadow:0 1px 5px rgba(0,0,0,0.15);border:1px solid rgba(31,51,39,0.08);}
+.id-card .qr canvas,.id-card .qr img{width:auto!important;height:auto!important;max-width:110px;max-height:110px;}
 .id-card-wali{background:linear-gradient(135deg,#eef1f7,#dbe2ee);}
 .id-card-wali::before{background:linear-gradient(90deg,#2f5d9d,#6f93c9,#d19a24);}
 .id-card-wali .head{background:#1e3a5f;}
