@@ -123,30 +123,48 @@ function nilaiAbsensiSantri(santriId, from, to){
 const JUZ_ORDER = [29, 30, ...Array.from({length:28}, (_,i)=>i+1)];
 function posisiJuz(juz){ return JUZ_ORDER.indexOf(juz) + 1; } // posisi ke-berapa (1..30) dalam urutan hafalan
 function juzSetelah(juz){ const p = posisiJuz(juz); return JUZ_ORDER[p % JUZ_ORDER.length]; } // juz berikutnya (mengikuti urutan, berputar setelah 28)
-/* "Hafalan Awal" (progres sebelum pakai aplikasi) diisi dengan NOMOR JUZ TERAKHIR YANG SUDAH
-   TUNTAS dihafal (mis. Juz 18) + halaman ke berapa progres di juz SETELAHNYA. Nomor juz itu
-   harus dikonversi memakai POSISI-nya dalam JUZ_ORDER (urutan pondok: 29,30,1,2,...,28), bukan
-   nomor juznya langsung -- supaya "sudah tuntas s.d. Juz 18" (=29,30,1..18, 20 juz) dihitung
-   20 juz, bukan 18. pagesFromJuzAwal = simpan; juzAwalFromPages = kebalikannya (untuk form edit). */
+/* "Hafalan Awal" (progres sebelum pakai aplikasi) diisi dengan NOMOR JUZ YANG SEDANG
+   DIHAFAL SEKARANG (mis. Juz 7, belum tuntas) + halaman terakhir yang sudah dihafal DI
+   JUZ ITU SENDIRI (mis. halaman 10). Nomor juz itu dikonversi memakai POSISI-nya dalam
+   JUZ_ORDER (urutan pondok: 29,30,1,2,...,28), bukan nomor juznya langsung -- supaya
+   "sedang di Juz 7 halaman 10" dihitung sudah tuntas 8 juz sebelumnya (29,30,1..6) + 10
+   halaman di Juz 7, bukan cuma "7 juz". Khusus kalau juz itu SUDAH TUNTAS (termasuk Juz
+   28, posisi terakhir yang tidak punya "juz berikutnya" untuk dipilih), pilih Halaman
+   ke-20 -- itu artinya juz tsb full 20 halaman, sehingga otomatis terhitung 1 juz penuh.
+   pagesFromJuzAwal = simpan; juzAwalFromPages = kebalikannya (untuk form edit). */
 function pagesFromJuzAwal(juz, halaman){
   if(!juz || juz<1) return 0;
-  return posisiJuz(juz)*20 + (halaman||0);
+  /* posisiJuz-1 = jumlah juz SEBELUM juz ini yang otomatis dianggap tuntas (mengikuti
+     urutan pondok), lalu ditambah halaman yang sudah dihafal di juz ini sendiri.
+     Otomatis terbatas maksimal 600 (30 juz) karena juz terakhir (28) ada di posisi 30. */
+  return (posisiJuz(juz)-1)*20 + (halaman||0);
 }
 function juzAwalFromPages(totalPages){
   const total = totalPages||0;
-  const jumlahJuzTuntas = Math.floor(total/20);
+  if(total<=0) return { juz: 0, halaman: 0 };
+  if(total>=JUZ_ORDER.length*20) return { juz: JUZ_ORDER[JUZ_ORDER.length-1], halaman: 20 }; // full 30 juz, tidak ada "juz berikutnya" lagi
+  const posisi = Math.floor(total/20) + 1; // posisi juz yang sedang dihafal sekarang (1..30)
   const halaman = total%20;
-  if(jumlahJuzTuntas<=0) return { juz: 0, halaman };
-  const idx = (jumlahJuzTuntas-1) % JUZ_ORDER.length;
-  return { juz: JUZ_ORDER[idx], halaman };
+  return { juz: JUZ_ORDER[posisi-1], halaman };
 }
-/* Juz yang sedang dihafal santri sekarang, berdasarkan input hafalan terakhir
-   yang dicatat lewat aplikasi (hafalan awal/sebelum pakai aplikasi tidak dipakai
-   di sini karena tidak diketahui juz persisnya, hanya total halamannya). */
+/* Juz yang sedang dihafal santri sekarang. Kalau sudah pernah ada input hafalan lewat
+   aplikasi, dihitung dari input terakhir. Kalau BELUM pernah ada input sama sekali,
+   posisi dimulai dari hafalan_awal (dikonversi lewat juzAwalFromPages) -- bukan selalu
+   dianggap "belum mulai dari Juz 29" walau santri itu sudah punya hafalan awal besar. */
 function juzSekarang(santriId){
   const items = DB.hafalan.filter(h=>h.santriId===santriId)
     .slice().sort((a,b)=> a.tanggal===b.tanggal ? String(a.id).localeCompare(String(b.id)) : a.tanggal.localeCompare(b.tanggal));
-  if(items.length===0) return { juz: JUZ_ORDER[0], halaman: 0, mulai: true, adaData: false };
+  if(items.length===0){
+    const s = DB.santri.find(x=>x.id===santriId);
+    const awal = s ? (s.hafalanAwal||0) : 0;
+    if(awal<=0) return { juz: JUZ_ORDER[0], halaman: 0, mulai: true, adaData: false };
+    if(awal>=JUZ_ORDER.length*20) return { juz: null, halaman: 0, mulai: false, adaData: true, khatam: true };
+    const posisi = juzAwalFromPages(awal);
+    if(posisi.halaman>=20){
+      return { juz: juzSetelah(posisi.juz), halaman: 0, mulai: true, adaData: true };
+    }
+    return { juz: posisi.juz, halaman: posisi.halaman, mulai: false, adaData: true };
+  }
   const last = items[items.length-1];
   if((last.halamanSampai||0) >= 20){
     return { juz: juzSetelah(last.juz), halaman: 0, mulai: true, adaData: true, tanggal: last.tanggal };
@@ -155,6 +173,7 @@ function juzSekarang(santriId){
 }
 function formatJuzSekarang(santriId){
   const c = juzSekarang(santriId);
+  if(c.khatam) return `Sudah khatam 30 juz`;
   if(!c.adaData) return `Belum mulai (dimulai dari Juz ${c.juz})`;
   if(c.mulai) return `Juz sebelumnya selesai, giliran Juz ${c.juz} (belum ada input)`;
   return `Juz ${c.juz}, halaman ${c.halaman}`;
@@ -245,7 +264,7 @@ async function loadAll() {
       })) : [],
       transaksiSaldo: (saldoRes.data || []).map(t => ({
         id: t.id, santriId: t.santri_id, jenis: t.jenis, nominal: t.jumlah,
-        keterangan: t.keterangan || '', tanggal: t.tanggal
+        keterangan: t.keterangan || '', tanggal: t.tanggal, status: t.status || 'aktif'
       })),
       pembina: (pembinaRes.data || []).map(p => ({
         id: p.id, nama: p.nama, program: p.program, tetala: p.tetala || '', alamat: p.alamat || '',
@@ -272,6 +291,7 @@ const NAV_ADMIN = [
   {id:'laporan', label:'Laporan', icon:'&#128202;'},
   {id:'rapor', label:'Rapor', icon:'&#127891;'},
   {id:'laporanToko', label:'Laporan Toko', icon:'&#128176;'},
+  {id:'laporanKeuangan', label:'Laporan Keuangan', icon:'&#128181;'},
   {id:'tagihan', label:'Tagihan', icon:'&#128179;'},
   {id:'pembina', label:'Pembina', icon:'&#128100;'},
   {id:'kelola', label:'Kelola', icon:'&#9881;'}
@@ -430,6 +450,7 @@ function goPage(p){
   if(p==='laporan') renderLaporanPage();
   if(p==='rapor') renderRaporPage();
   if(p==='laporanToko') renderKasPage();
+  if(p==='laporanKeuangan') renderLaporanKeuanganPage();
   if(p==='tagihan') renderTagihanPage();
   if(p==='pembina') renderPembinaPage();
   if(p==='kelola') renderKelolaPage();
@@ -572,6 +593,11 @@ function openSantriForm(existing){
   const juzAwal = (s.hafalanAwal||0) > 0 ? konversiAwal.juz : 0;
   const halAwal = (s.hafalanAwal||0) > 0 ? konversiAwal.halaman : 0;
   const optsN = (n, selected)=>Array.from({length:n+1},(_,i)=>i).map(v=>`<option value="${v}" ${v===selected?'selected':''}>${v}</option>`).join('');
+  /* Opsi dropdown Juz mengikuti urutan hafalan pondok (29, 30, 1, 2, ... , 28),
+     bukan urutan angka biasa -- supaya admin memilih sesuai giliran hafalan santri.
+     "0" (belum mulai) tetap ditaruh paling atas. */
+  const optsJuzUrutan = (selected)=>['<option value="0" '+(selected===0?'selected':'')+'>0 (belum mulai)</option>']
+    .concat(JUZ_ORDER.map(v=>`<option value="${v}" ${v===selected?'selected':''}>${v}</option>`)).join('');
   showModal('Data Santri', `
     <label>Foto profil</label>
     <input type="file" accept="image/*" onchange="readImageTo(this,'f_foto')">
@@ -610,10 +636,10 @@ function openSantriForm(existing){
     </div>
     <input type="hidden" id="f_program" value="${s.program}">
     <label>Total Hafalan Awal (sebelum pakai aplikasi ini)</label>
-    <p class="muted" style="margin:0 0 4px">1 juz = 20 halaman. Isi progres hafalan santri saat ini (nomor juz &amp; halaman terakhir yang sedang/sudah dihafal) sebelum mulai dicatat lewat aplikasi. Urutan hafalan pondok: Juz 29, 30, 1, 2, ... sampai 28 &mdash; jumlah juz akan otomatis dihitung sesuai urutan ini, bukan berdasarkan nomor juznya langsung.</p>
+    <p class="muted" style="margin:0 0 4px">1 juz = 20 halaman. Isi Juz yang <b>sedang</b> dihafal santri sekarang (belum tuntas) dan halaman terakhir yang sudah dihafal di juz itu, sebelum mulai dicatat lewat aplikasi. Urutan hafalan pondok: Juz 29, 30, 1, 2, ... sampai 28 &mdash; jumlah juz yang sudah tuntas sebelumnya akan otomatis dihitung sesuai urutan ini. Kalau juznya sudah tuntas semua (termasuk Juz 28), pilih Halaman ke-20.</p>
     <div class="grid2">
-      <div><label>Juz</label><select id="f_juzAwal">${optsN(30, juzAwal)}</select></div>
-      <div><label>Halaman ke-</label><select id="f_halAwal">${optsN(19, halAwal)}</select></div>
+      <div><label>Juz</label><select id="f_juzAwal">${optsJuzUrutan(juzAwal)}</select></div>
+      <div><label>Halaman ke-</label><select id="f_halAwal">${optsN(20, halAwal)}</select></div>
     </div>
     <div class="btn-row">
       <button class="btn btn-accent" onclick="saveSantri('${s.id||''}', ${isNew})">Simpan</button>
@@ -1729,6 +1755,211 @@ function renderIuranBody(body){
       </div>
     `;
   }).join('');
+}
+
+/* ---------- LAPORAN KEUANGAN ----------
+   Laporan (baca saja) dari data yang dikelola di Aplikasi Keuangan:
+   - Ringkasan: total saldo santri saat ini + mutasi (setoran/tarik/bayar) periode terpilih
+   - Tagihan & Iuran: rekap NOMINAL per jenis (melengkapi tab Tagihan yang cuma tampilkan daftar nama belum bayar)
+   - Riwayat Transaksi: daftar transaksi saldo periode terpilih, bisa dicari per nama santri
+   Numpang pakai TAGIHAN_DATA & loadTagihanData() dari bagian Tagihan di atas supaya tidak dobel fetch/kode. */
+let lapKeuTab = 'ringkasan'; // 'ringkasan' | 'tagihan' | 'riwayat'
+let lapKeuFrom = '', lapKeuTo = todayStr();
+let lapKeuSearchQuery = '';
+const JENIS_SALDO_LABEL = { setoran: 'Setoran', tarik: 'Tarik Tunai', bayar: 'Bayar' };
+
+function renderLaporanKeuanganPage(){
+  if(!lapKeuFrom){ const d=new Date(); d.setDate(d.getDate()-30); lapKeuFrom=d.toISOString().slice(0,10); }
+  document.getElementById('content').innerHTML = `
+    <div class="page-head">
+      <div class="page-head-top"><h2>Laporan Keuangan</h2></div>
+      <div class="tabs">
+        <button class="tab ${lapKeuTab==='ringkasan'?'active':''}" onclick="lapKeuTab='ringkasan'; renderLaporanKeuanganPage()">Ringkasan</button>
+        <button class="tab ${lapKeuTab==='tagihan'?'active':''}" onclick="lapKeuTab='tagihan'; renderLaporanKeuanganPage()">Tagihan &amp; Iuran</button>
+        <button class="tab ${lapKeuTab==='riwayat'?'active':''}" onclick="lapKeuTab='riwayat'; renderLaporanKeuanganPage()">Riwayat Transaksi</button>
+      </div>
+      <div class="filter-bar">
+        <div class="filter-date"><label>Dari</label><input type="date" value="${lapKeuFrom}" onchange="lapKeuFrom=this.value; renderLaporanKeuanganBody()"></div>
+        <div class="filter-date"><label>S.d.</label><input type="date" value="${lapKeuTo}" onchange="lapKeuTo=this.value; renderLaporanKeuanganBody()"></div>
+        ${lapKeuTab==='riwayat' ? `<div class="filter-search"><input type="text" placeholder="Cari nama santri..." value="${escapeHtml(lapKeuSearchQuery)}" oninput="lapKeuSearchQuery=this.value; renderLaporanKeuanganBody()"></div>` : ''}
+      </div>
+      <p class="muted" style="margin:6px 2px 0;font-size:11px">Data ditarik dari Aplikasi Keuangan (baca saja). Pencatatan tetap lewat Aplikasi Keuangan.</p>
+    </div>
+    <div id="lapKeuBody"><p class="muted">Memuat data...</p></div>
+  `;
+  renderLaporanKeuanganBody();
+}
+async function renderLaporanKeuanganBody(){
+  await loadTagihanData();
+  const body = document.getElementById('lapKeuBody');
+  if(!body) return; // pengguna sudah pindah halaman sebelum data selesai dimuat
+  if(TAGIHAN_DATA==='error'){
+    body.innerHTML = `<p class="muted" style="color:var(--danger)">Gagal memuat data. Periksa koneksi internet.</p><button class="btn" onclick="renderLaporanKeuanganBody()">Muat Ulang</button>`;
+    return;
+  }
+  if(lapKeuTab==='tagihan') renderLapKeuTagihan(body);
+  else if(lapKeuTab==='riwayat') renderLapKeuRiwayat(body);
+  else renderLapKeuRingkasan(body);
+}
+/* Saldo santri tidak disimpan sebagai satu kolom di tabel santri -- dihitung dari akumulasi
+   SEMUA transaksi_saldo (bukan cuma periode terpilih) yang belum dibatalkan, sama seperti cara
+   Aplikasi Keuangan menghitung saldo tiap santri. */
+function hitungSaldoSantriTotal(){
+  const aktif = DB.transaksiSaldo.filter(t=>t.status!=='dibatalkan');
+  const setoran = aktif.filter(t=>t.jenis==='setoran').reduce((s,t)=>s+Number(t.nominal),0);
+  const tarik = aktif.filter(t=>t.jenis==='tarik').reduce((s,t)=>s+Number(t.nominal),0);
+  const bayar = aktif.filter(t=>t.jenis==='bayar').reduce((s,t)=>s+Number(t.nominal),0);
+  return setoran - tarik - bayar;
+}
+function transaksiSaldoPeriode(){
+  return DB.transaksiSaldo.filter(t=>t.status!=='dibatalkan' && t.tanggal>=lapKeuFrom && t.tanggal<=lapKeuTo);
+}
+function hitungMutasiPeriode(){
+  const trx = transaksiSaldoPeriode();
+  const setoran = trx.filter(t=>t.jenis==='setoran').reduce((s,t)=>s+Number(t.nominal),0);
+  const tarik = trx.filter(t=>t.jenis==='tarik').reduce((s,t)=>s+Number(t.nominal),0);
+  const bayar = trx.filter(t=>t.jenis==='bayar').reduce((s,t)=>s+Number(t.nominal),0);
+  return { setoran, tarik, bayar, jumlahTransaksi: trx.length };
+}
+function renderLapKeuRingkasan(body){
+  const totalSaldo = hitungSaldoSantriTotal();
+  const m = hitungMutasiPeriode();
+  const tagihanLunas = TAGIHAN_DATA.tagihan.filter(t=>t.status==='lunas').reduce((s,t)=>s+Number(t.jumlah),0);
+  const tagihanBelum = TAGIHAN_DATA.tagihan.filter(t=>t.status==='belum').reduce((s,t)=>s+Number(t.jumlah),0);
+  const iuranLunas = TAGIHAN_DATA.iuranDetail.filter(d=>d.status==='lunas').reduce((s,d)=>s+Number(d.jumlah),0);
+  const iuranBelum = TAGIHAN_DATA.iuranDetail.filter(d=>d.status==='belum').reduce((s,d)=>s+Number(d.jumlah),0);
+  body.innerHTML = `
+    <div class="grid2">
+      <div class="stat"><div class="num">${formatRupiah(totalSaldo)}</div><div class="label">Total Saldo Santri (saat ini)</div></div>
+      <div class="stat"><div class="num">${m.jumlahTransaksi}</div><div class="label">Transaksi (periode terpilih)</div></div>
+    </div>
+    <div class="card" style="margin-top:12px">
+      <div class="card-title">Mutasi Saldo &middot; Periode ${lapKeuFrom} s.d. ${lapKeuTo}</div>
+      <div class="list-item"><div class="name" style="flex:1">Setoran (masuk)</div><div style="font-weight:600;color:var(--green-700)">+${formatRupiah(m.setoran)}</div></div>
+      <div class="list-item"><div class="name" style="flex:1">Tarik Tunai (keluar)</div><div style="font-weight:600;color:var(--danger)">-${formatRupiah(m.tarik)}</div></div>
+      <div class="list-item"><div class="name" style="flex:1">Bayar (tagihan/toko via saldo)</div><div style="font-weight:600;color:var(--danger)">-${formatRupiah(m.bayar)}</div></div>
+      <div class="list-item"><div class="name" style="flex:1"><b>Selisih Bersih</b></div><div style="font-weight:700">${formatRupiah(m.setoran - m.tarik - m.bayar)}</div></div>
+    </div>
+    <div class="card">
+      <div class="card-title">Tagihan (kumulatif, semua periode)</div>
+      <div class="list-item"><div class="name" style="flex:1">Sudah terbayar</div><div style="font-weight:600;color:var(--green-700)">${formatRupiah(tagihanLunas)}</div></div>
+      <div class="list-item"><div class="name" style="flex:1">Belum terbayar</div><div style="font-weight:600;color:var(--danger)">${formatRupiah(tagihanBelum)}</div></div>
+    </div>
+    <div class="card">
+      <div class="card-title">Iuran (kumulatif, semua periode)</div>
+      <div class="list-item"><div class="name" style="flex:1">Sudah terbayar</div><div style="font-weight:600;color:var(--green-700)">${formatRupiah(iuranLunas)}</div></div>
+      <div class="list-item"><div class="name" style="flex:1">Belum terbayar</div><div style="font-weight:600;color:var(--danger)">${formatRupiah(iuranBelum)}</div></div>
+    </div>
+    <div class="btn-row">
+      <button class="btn btn-sm" onclick="unduhLaporanKeuanganExcel()">&#128190; Unduh Excel</button>
+    </div>
+  `;
+}
+function renderLapKeuTagihan(body){
+  const rowsTagihan = groupTagihan().map(g=>{
+    const lunas = g.items.filter(t=>t.status==='lunas');
+    const belum = g.items.filter(t=>t.status==='belum');
+    return {
+      nama: `${namaJenisTagihan(g.jenisId)} \u00b7 ${bulanLabel(g.bulan)}`,
+      lunas: lunas.length, belum: belum.length,
+      nominalLunas: lunas.reduce((s,t)=>s+Number(t.jumlah),0),
+      nominalBelum: belum.reduce((s,t)=>s+Number(t.jumlah),0)
+    };
+  });
+  const rowsIuran = TAGIHAN_DATA.iuran.map(it=>{
+    const items = TAGIHAN_DATA.iuranDetail.filter(d=>d.iuran_id===it.id);
+    const lunas = items.filter(d=>d.status==='lunas');
+    const belum = items.filter(d=>d.status==='belum');
+    return {
+      nama: it.keterangan || 'Iuran',
+      lunas: lunas.length, belum: belum.length,
+      nominalLunas: lunas.reduce((s,d)=>s+Number(d.jumlah),0),
+      nominalBelum: belum.reduce((s,d)=>s+Number(d.jumlah),0)
+    };
+  });
+  const tabelRow = r => `<tr><td>${escapeHtml(r.nama)}</td><td>${r.lunas}</td><td>${r.belum}</td><td>${formatRupiah(r.nominalLunas)}</td><td>${formatRupiah(r.nominalBelum)}</td></tr>`;
+  body.innerHTML = `
+    <div class="card">
+      <div class="card-title">Rekap Tagihan per Jenis &amp; Bulan</div>
+      <div class="table-wrap"><table>
+        <tr><th>Tagihan</th><th>Lunas</th><th>Belum</th><th>Nominal Lunas</th><th>Nominal Belum</th></tr>
+        ${rowsTagihan.length ? rowsTagihan.map(tabelRow).join('') : '<tr><td colspan="5" class="muted">Belum ada data tagihan.</td></tr>'}
+      </table></div>
+    </div>
+    <div class="card">
+      <div class="card-title">Rekap Iuran</div>
+      <div class="table-wrap"><table>
+        <tr><th>Iuran</th><th>Lunas</th><th>Belum</th><th>Nominal Lunas</th><th>Nominal Belum</th></tr>
+        ${rowsIuran.length ? rowsIuran.map(tabelRow).join('') : '<tr><td colspan="5" class="muted">Belum ada data iuran.</td></tr>'}
+      </table></div>
+    </div>
+    <div class="btn-row">
+      <button class="btn btn-sm" onclick="unduhLaporanKeuanganExcel()">&#128190; Unduh Excel</button>
+    </div>
+  `;
+}
+function renderLapKeuRiwayat(body){
+  const q = lapKeuSearchQuery.trim().toLowerCase();
+  let trx = transaksiSaldoPeriode();
+  if(q) trx = trx.filter(t=>namaSantriById(t.santriId).toLowerCase().includes(q));
+  trx = trx.slice().sort((a,b)=> b.tanggal.localeCompare(a.tanggal));
+  body.innerHTML = `
+    <div class="card">
+      <div class="card-title">Riwayat Transaksi Saldo (${trx.length} transaksi)</div>
+      <div class="table-wrap"><table>
+        <tr><th>Tanggal</th><th>Santri</th><th>Jenis</th><th>Nominal</th><th>Keterangan</th></tr>
+        ${trx.length ? trx.map(t=>`<tr><td>${t.tanggal}</td><td>${escapeHtml(namaSantriById(t.santriId))}</td><td>${JENIS_SALDO_LABEL[t.jenis]||t.jenis}</td><td>${formatRupiah(t.nominal)}</td><td>${escapeHtml(t.keterangan||'-')}</td></tr>`).join('') : '<tr><td colspan="5" class="muted">Tidak ada transaksi pada periode ini.</td></tr>'}
+      </table></div>
+    </div>
+    <div class="btn-row">
+      <button class="btn btn-sm" onclick="unduhLaporanKeuanganExcel()">&#128190; Unduh Excel</button>
+    </div>
+  `;
+}
+function unduhLaporanKeuanganExcel(){
+  const wb = XLSX.utils.book_new();
+  const totalSaldo = hitungSaldoSantriTotal();
+  const m = hitungMutasiPeriode();
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet([
+    { Pos: 'Total Saldo Santri (saat ini)', Nominal: totalSaldo },
+    { Pos: `Setoran (periode ${lapKeuFrom} s.d. ${lapKeuTo})`, Nominal: m.setoran },
+    { Pos: 'Tarik Tunai (periode)', Nominal: m.tarik },
+    { Pos: 'Bayar (periode)', Nominal: m.bayar },
+    { Pos: 'Selisih Bersih (periode)', Nominal: m.setoran - m.tarik - m.bayar }
+  ]), 'Ringkasan');
+
+  const tagihanRows = groupTagihan().map(g=>{
+    const lunas = g.items.filter(t=>t.status==='lunas');
+    const belum = g.items.filter(t=>t.status==='belum');
+    return {
+      Tagihan: `${namaJenisTagihan(g.jenisId)} - ${bulanLabel(g.bulan)}`,
+      'Jumlah Lunas': lunas.length, 'Jumlah Belum': belum.length,
+      'Nominal Lunas': lunas.reduce((s,t)=>s+Number(t.jumlah),0),
+      'Nominal Belum': belum.reduce((s,t)=>s+Number(t.jumlah),0)
+    };
+  });
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(tagihanRows.length ? tagihanRows : [{Tagihan:'-','Jumlah Lunas':0,'Jumlah Belum':0,'Nominal Lunas':0,'Nominal Belum':0}]), 'Tagihan');
+
+  const iuranRows = TAGIHAN_DATA.iuran.map(it=>{
+    const items = TAGIHAN_DATA.iuranDetail.filter(d=>d.iuran_id===it.id);
+    const lunas = items.filter(d=>d.status==='lunas');
+    const belum = items.filter(d=>d.status==='belum');
+    return {
+      Iuran: it.keterangan || 'Iuran',
+      'Jumlah Lunas': lunas.length, 'Jumlah Belum': belum.length,
+      'Nominal Lunas': lunas.reduce((s,d)=>s+Number(d.jumlah),0),
+      'Nominal Belum': belum.reduce((s,d)=>s+Number(d.jumlah),0)
+    };
+  });
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(iuranRows.length ? iuranRows : [{Iuran:'-','Jumlah Lunas':0,'Jumlah Belum':0,'Nominal Lunas':0,'Nominal Belum':0}]), 'Iuran');
+
+  const trxRows = transaksiSaldoPeriode().slice().sort((a,b)=>a.tanggal.localeCompare(b.tanggal)).map(t=>({
+    Tanggal: t.tanggal, Santri: namaSantriById(t.santriId), Jenis: JENIS_SALDO_LABEL[t.jenis]||t.jenis,
+    Nominal: t.nominal, Keterangan: t.keterangan||''
+  }));
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(trxRows.length ? trxRows : [{Tanggal:'-',Santri:'-',Jenis:'-',Nominal:0,Keterangan:''}]), 'Riwayat Transaksi');
+
+  XLSX.writeFile(wb, `Laporan-Keuangan-${lapKeuFrom}_${lapKeuTo}.xlsx`);
 }
 
 /* ---------- RAPOR ---------- */
