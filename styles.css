@@ -196,20 +196,21 @@ th{color:var(--muted);font-weight:600;font-size:12px;}
 .modal-close{background:none;border:none;font-size:20px;color:var(--muted);}
 
 /* Printable card */
-.id-card{width:360px;height:220px;border-radius:16px;background:linear-gradient(135deg,#eef4ee,#dbe8dd);border:1px solid var(--border);padding:0;position:relative;overflow:hidden;margin:0 auto;box-shadow:0 4px 16px rgba(31,51,39,0.12);display:flex;flex-direction:column;}
+.id-card{width:54.5mm;height:84.5mm;border-radius:16px;background:linear-gradient(135deg,#eef4ee,#dbe8dd);border:1px solid var(--border);padding:0;position:relative;overflow:hidden;margin:0 auto;box-shadow:0 4px 16px rgba(31,51,39,0.12);display:flex;flex-direction:column;}
 .id-card::before{content:"";position:absolute;top:0;left:0;right:0;height:5px;background:linear-gradient(90deg,#3b5940,#6b9b6f,#d19a24);z-index:1;}
 .id-card::after{content:"";position:absolute;top:0;right:-30px;width:140px;height:140px;border-radius:50%;background:radial-gradient(circle,rgba(255,255,255,0.35),rgba(255,255,255,0));pointer-events:none;}
-.id-card .head{flex-shrink:0;display:flex;align-items:center;gap:10px;background:#1f3327;padding:10px 14px;margin-top:5px;position:relative;z-index:1;}
-.id-card .head .head-logo{width:38px;height:38px;border-radius:50%;background:#fff;padding:3px;box-shadow:0 1px 4px rgba(0,0,0,0.25);flex-shrink:0;overflow:hidden;box-sizing:border-box;display:flex;align-items:center;justify-content:center;}
+.id-card .head{flex-shrink:0;display:flex;align-items:center;gap:7px;background:#1f3327;padding:7px 11px;margin-top:4px;position:relative;z-index:1;}
+.id-card .head .head-logo{width:26px;height:26px;border-radius:50%;background:#fff;padding:2px;box-shadow:0 1px 4px rgba(0,0,0,0.25);flex-shrink:0;overflow:hidden;box-sizing:border-box;display:flex;align-items:center;justify-content:center;}
 .id-card .head .head-logo img{width:100%;height:100%;object-fit:cover;display:block;}
-.id-card .head .pn{font-size:11px;font-weight:800;color:#eef4ee;letter-spacing:.4px;line-height:1.35;}
-.id-card .body{flex:1;display:flex;gap:12px;padding:8px 16px;align-items:center;position:relative;z-index:1;}
-.id-card .left{display:flex;gap:10px;flex:1;min-width:0;align-items:center;}
-.id-card .photo{width:68px;height:86px;border-radius:9px;object-fit:cover;background:#ccc;flex-shrink:0;border:2px solid #fff;box-shadow:0 1px 5px rgba(0,0,0,0.18);}
-.id-card .photo-placeholder{display:flex;align-items:center;justify-content:center;font-size:28px;color:#8aa38d;background:#e4ece3;}
-.id-card .info{font-size:10.5px;line-height:1.6;color:#233a2b;overflow:hidden;}
-.id-card .info .nm{font-size:14.5px;font-weight:800;margin-bottom:3px;color:#1f3327;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
-.id-card .qr{flex-shrink:0;width:104px;height:104px;background:#fff;padding:5px;border-radius:10px;display:flex;align-items:center;justify-content:center;box-shadow:0 1px 5px rgba(0,0,0,0.15);border:1px solid rgba(31,51,39,0.08);}
+.id-card .head .pn{font-size:8.5px;font-weight:800;color:#eef4ee;letter-spacing:.3px;line-height:1.3;}
+.id-card .body{flex:1;display:flex;flex-direction:column;padding:9px 12px 10px;position:relative;z-index:1;}
+.id-card .left{display:flex;gap:8px;align-items:flex-start;}
+.id-card .photo{width:52px;height:66px;border-radius:8px;object-fit:cover;background:#ccc;flex-shrink:0;border:2px solid #fff;box-shadow:0 1px 5px rgba(0,0,0,0.18);}
+.id-card .photo-placeholder{display:flex;align-items:center;justify-content:center;font-size:22px;color:#8aa38d;background:#e4ece3;}
+.id-card .info{font-size:8.5px;line-height:1.5;color:#233a2b;min-width:0;}
+.id-card .info .nm{font-size:11px;font-weight:800;margin-bottom:3px;color:#1f3327;white-space:normal;overflow:visible;text-overflow:unset;word-break:break-word;}
+.id-card .qr{flex:1;min-height:0;margin:4px 0 0;background:#fff;padding:6px;border-radius:10px;display:flex;align-items:flex-start;justify-content:center;box-shadow:0 1px 5px rgba(0,0,0,0.15);border:1px solid rgba(31,51,39,0.08);}
+.id-card .qr canvas,.id-card .qr img{width:100%!important;height:auto!important;max-width:150px;}
 .id-card-wali{background:linear-gradient(135deg,#eef1f7,#dbe2ee);}
 .id-card-wali::before{background:linear-gradient(90deg,#2f5d9d,#6f93c9,#d19a24);}
 .id-card-wali .head{background:#1e3a5f;}

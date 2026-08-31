@@ -976,7 +976,7 @@ function openCardSantri(santriId){
       ${s.namaWali?`<button class="btn" onclick="openCardWali('${s.id}')">Lanjut cetak kartu wali</button>`:''}
     </div>
   `);
-  setTimeout(()=>{ new QRCode(document.getElementById('qrSantri'), {text: s.noInduk, width:110, height:110, correctLevel: QRCode.CorrectLevel.M}); }, 50);
+  setTimeout(()=>{ new QRCode(document.getElementById('qrSantri'), {text: s.noInduk, width:150, height:150, correctLevel: QRCode.CorrectLevel.M}); }, 50);
 }
 function openCardWali(santriId){
   const s = DB.santri.find(x=>x.id===santriId);
@@ -1012,7 +1012,7 @@ function openCardWali(santriId){
       <button class="btn" onclick="window.print()">&#128424; Cetak</button>
     </div>
   `);
-  setTimeout(()=>{ new QRCode(document.getElementById('qrWali'), {text: s.noInduk+'|'+s.kodeWali, width:110, height:110, correctLevel: QRCode.CorrectLevel.M}); }, 50);
+  setTimeout(()=>{ new QRCode(document.getElementById('qrWali'), {text: s.noInduk+'|'+s.kodeWali, width:150, height:150, correctLevel: QRCode.CorrectLevel.M}); }, 50);
 }
 function openCardMahram(santriId, idx){
   const s = DB.santri.find(x=>x.id===santriId);
@@ -1040,7 +1040,7 @@ function openCardMahram(santriId, idx){
       <button class="btn" onclick="window.print()">&#128424; Cetak</button>
     </div>
   `);
-  setTimeout(()=>{ new QRCode(document.getElementById('qrMahram'), {text: s.noInduk+'-M'+idx, width:110, height:110, correctLevel: QRCode.CorrectLevel.M}); }, 50);
+  setTimeout(()=>{ new QRCode(document.getElementById('qrMahram'), {text: s.noInduk+'-M'+idx, width:150, height:150, correctLevel: QRCode.CorrectLevel.M}); }, 50);
 }
 
 /* ---------- LAPORAN (riwayat absensi & hafalan, diisi lewat Aplikasi Pembina) ---------- */
