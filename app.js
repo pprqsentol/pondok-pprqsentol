@@ -870,7 +870,7 @@ function renderRiwayatSantri(santriId){
       ${hafalan.map(h=>`<tr><td>${h.tanggal}</td><td>${escapeHtml(namaKegiatan(h.kegiatanId))}</td><td>${h.juz}</td><td>${h.halamanDari===h.halamanSampai?h.halamanDari:h.halamanDari+'-'+h.halamanSampai}</td></tr>`).join('')}
       </table></div>`}
 
-    <div class="section-heading">Riwayat Setoran 2 / Murojaah (periode ini)</div>
+    <div class="section-heading">Riwayat Murojaah (periode ini)</div>
     ${murojaah.length===0?'<p class="muted">Belum ada dicatat pada periode ini.</p>':`
       <div class="table-wrap"><table><tr><th>Tanggal</th><th>Kegiatan</th><th>Juz</th><th>Cakupan</th></tr>
       ${murojaah.map(m=>`<tr><td>${m.tanggal}</td><td>${escapeHtml(namaKegiatan(m.kegiatanId))}</td><td>${m.juz}</td><td>${escapeHtml(m.cakupan)}</td></tr>`).join('')}
