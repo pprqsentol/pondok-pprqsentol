@@ -298,6 +298,7 @@ const NAV_ADMIN = [
 ];
 
 let currentPage = 'beranda';
+let subViewBack = null; // diisi fungsi "kembali" saat membuka sub-tampilan (mis. detail santri) di dalam sebuah tab
 
 function togglePasswordView(){
   const inp = document.getElementById('loginPassword');
@@ -443,6 +444,7 @@ async function refreshData(){
 }
 function goPage(p){
   currentPage = p;
+  subViewBack = null; // pindah tab utama -> keluar dari sub-tampilan mana pun yang sedang terbuka
   document.querySelectorAll('.navitem').forEach(el=>el.classList.toggle('active', el.dataset.p===p));
   const c = document.getElementById('content');
   if(p==='beranda') c.innerHTML = pageBeranda();
@@ -509,6 +511,7 @@ function filteredSantriList(){
   });
 }
 function renderSantriPage(){
+  subViewBack = null;
   document.getElementById('content').innerHTML = `
     <div class="page-head">
       <div class="page-head-top"><h2>Data Santri</h2><button class="btn btn-accent btn-sm" onclick="openSantriForm()">+ Tambah</button></div>
@@ -741,6 +744,7 @@ function val(id){ return document.getElementById(id).value; }
 /* ---------- SANTRI: DETAIL ---------- */
 let santriDetailTab = 'informasi';
 function openSantriDetail(id){
+  subViewBack = renderSantriPage;
   const s = DB.santri.find(x=>x.id===id);
   document.getElementById('content').innerHTML = `
     <button class="btn btn-sm" onclick="renderSantriPage()">&larr; Kembali</button>
@@ -2337,6 +2341,68 @@ function showModal(title, bodyHtml, onCloseFnCall){
   `;
 }
 function closeModal(){ document.getElementById('modalRoot').innerHTML=''; }
+
+/* ---------- TOMBOL KEMBALI (HP/PERANGKAT) ---------- */
+// Supaya tombol kembali di HP/perangkat lain tidak langsung menutup aplikasi:
+// 1) kalau ada modal terbuka -> tutup modal itu saja
+// 2) kalau sedang di sub-tampilan (mis. detail santri) -> kembali ke tampilan sebelumnya
+// 3) kalau sedang di tab selain Beranda -> pindah ke tab Beranda
+// 4) kalau sudah di Beranda tanpa modal -> minta tekan sekali lagi untuk benar-benar keluar
+let exitConfirmActive = false;
+let exitConfirmTimer = null;
+
+function pushBackGuard(){
+  try{ history.pushState({ backGuard: true }, '', location.href); }catch(e){}
+}
+
+function showExitToast(){
+  let t = document.getElementById('exitToast');
+  if(!t){
+    t = document.createElement('div');
+    t.id = 'exitToast';
+    t.style.cssText = 'position:fixed;left:50%;bottom:26px;transform:translateX(-50%);background:#222;color:#fff;padding:10px 18px;border-radius:20px;font-size:13px;z-index:99999;opacity:0;transition:opacity .2s;pointer-events:none;box-shadow:0 2px 10px rgba(0,0,0,.25)';
+    document.body.appendChild(t);
+  }
+  t.textContent = 'Tekan sekali lagi untuk keluar';
+  clearTimeout(t._hideTimer);
+  requestAnimationFrame(()=>{ t.style.opacity = '1'; });
+  t._hideTimer = setTimeout(()=>{ t.style.opacity = '0'; }, 1800);
+}
+
+function handleHardwareBack(){
+  const modalRoot = document.getElementById('modalRoot');
+  if(modalRoot && modalRoot.innerHTML.trim() !== ''){
+    closeModal();
+    pushBackGuard();
+    return;
+  }
+  if(typeof subViewBack === 'function'){
+    const fn = subViewBack;
+    subViewBack = null;
+    fn();
+    pushBackGuard();
+    return;
+  }
+  const appVisible = document.getElementById('app').style.display !== 'none';
+  if(appVisible && currentPage !== 'beranda'){
+    goPage('beranda');
+    pushBackGuard();
+    return;
+  }
+  if(exitConfirmActive){
+    // konfirmasi kedua -> biarkan keluar (tidak pasang guard lagi)
+    exitConfirmActive = false;
+    clearTimeout(exitConfirmTimer);
+    return;
+  }
+  exitConfirmActive = true;
+  showExitToast();
+  exitConfirmTimer = setTimeout(()=>{ exitConfirmActive = false; }, 2000);
+  pushBackGuard();
+}
+
+window.addEventListener('popstate', handleHardwareBack);
+pushBackGuard(); // pasang penjaga pertama supaya tombol kembali pertama kali memicu popstate, bukan langsung menutup app
 
 /* ---------- INIT ---------- */
 initLogin();
