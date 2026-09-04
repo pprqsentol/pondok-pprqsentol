@@ -472,6 +472,28 @@ function visibleSantriForKegiatan(kegiatanId){
 }
 function initial(name){ return (name||'?').split(' ').map(w=>w[0]).slice(0,2).join('').toUpperCase(); }
 function todayStr(){ return new Date().toISOString().slice(0,10); }
+// Bantuan hitung rentang tanggal untuk preset periode (Harian/Mingguan/Bulanan/Tahunan) di Laporan Toko.
+function rangeMinggu(dateStr){
+  const [y,m,d] = dateStr.split('-').map(Number);
+  const dt = new Date(y, m-1, d);
+  const dow = dt.getDay(); // 0=Minggu..6=Sabtu
+  const diffKeSenin = (dow===0 ? -6 : 1-dow);
+  const senin = new Date(dt); senin.setDate(dt.getDate()+diffKeSenin);
+  const minggu = new Date(senin); minggu.setDate(senin.getDate()+6);
+  const fmt = x => `${x.getFullYear()}-${String(x.getMonth()+1).padStart(2,'0')}-${String(x.getDate()).padStart(2,'0')}`;
+  return { dari: fmt(senin), sampai: fmt(minggu) };
+}
+function rangeBulan(dateStr){
+  const [y,m] = dateStr.split('-').map(Number);
+  const dari = `${y}-${String(m).padStart(2,'0')}-01`;
+  const hariTerakhir = new Date(y, m, 0).getDate();
+  const sampai = `${y}-${String(m).padStart(2,'0')}-${String(hariTerakhir).padStart(2,'0')}`;
+  return { dari, sampai };
+}
+function rangeTahun(dateStr){
+  const y = dateStr.split('-')[0];
+  return { dari: `${y}-01-01`, sampai: `${y}-12-31` };
+}
 
 /* ---------- BERANDA ---------- */
 function pageBeranda(){
@@ -1363,6 +1385,7 @@ function renderLaporanAbsensi(santri){
    Laba Bersih = Total Laba - Operasional
    (laba kotor per transaksi dihitung dari harga jual - harga beli produk saat ini) ------- */
 let kasFrom = '', kasTo = todayStr();
+let kasPreset = 'custom'; // 'custom' | 'harian' | 'mingguan' | 'bulanan' | 'tahunan'
 let laporanTokoTab = 'kas'; // 'kas' | 'laba'
 let KAS_DATA = null;
 const KAS_LOKASI_DEFAULT = 'Utama'; // nilai lokasi tetap untuk baris baru (kolom lokasi tidak dipakai lagi di UI)
@@ -1467,8 +1490,15 @@ function renderKasPage(){
         <button class="tab ${laporanTokoTab==='laba'?'active':''}" onclick="laporanTokoTab='laba'; renderKasPage()">Laba</button>
       </div>
       <div class="filter-bar">
-        <div class="filter-date"><label>Dari</label><input type="date" value="${kasFrom}" onchange="kasFrom=this.value; renderKasBody()"></div>
-        <div class="filter-date"><label>S.d.</label><input type="date" value="${kasTo}" onchange="kasTo=this.value; renderKasBody()"></div>
+        <select onchange="terapkanPresetKas(this.value)">
+          <option value="custom" ${kasPreset==='custom'?'selected':''}>Kustom</option>
+          <option value="harian" ${kasPreset==='harian'?'selected':''}>Harian (Hari Ini)</option>
+          <option value="mingguan" ${kasPreset==='mingguan'?'selected':''}>Pekan Ini</option>
+          <option value="bulanan" ${kasPreset==='bulanan'?'selected':''}>Bulan Ini</option>
+          <option value="tahunan" ${kasPreset==='tahunan'?'selected':''}>Tahun Ini</option>
+        </select>
+        <div class="filter-date"><label>Dari</label><input type="date" value="${kasFrom}" onchange="kasFrom=this.value; kasPreset='custom'; renderKasPage()"></div>
+        <div class="filter-date"><label>S.d.</label><input type="date" value="${kasTo}" onchange="kasTo=this.value; kasPreset='custom'; renderKasPage()"></div>
       </div>
     </div>
     <div class="btn-row" style="margin-bottom:10px">
@@ -1477,6 +1507,16 @@ function renderKasPage(){
     <div id="kasBody"><p class="muted">Memuat data...</p></div>
   `;
   renderKasBody();
+}
+function terapkanPresetKas(preset){
+  kasPreset = preset;
+  if(preset==='custom'){ renderKasPage(); return; }
+  const today = todayStr();
+  if(preset==='harian'){ kasFrom = today; kasTo = today; }
+  else if(preset==='mingguan'){ ({dari:kasFrom, sampai:kasTo} = rangeMinggu(today)); }
+  else if(preset==='bulanan'){ ({dari:kasFrom, sampai:kasTo} = rangeBulan(today)); }
+  else { ({dari:kasFrom, sampai:kasTo} = rangeTahun(today)); }
+  renderKasPage();
 }
 async function renderKasBody(){
   await loadKasData();
