@@ -471,7 +471,24 @@ function visibleSantriForKegiatan(kegiatanId){
   return base.filter(s=>s.program===keg.programKhusus);
 }
 function initial(name){ return (name||'?').split(' ').map(w=>w[0]).slice(0,2).join('').toUpperCase(); }
-function todayStr(){ return new Date().toISOString().slice(0,10); }
+// Tanggal "hari ini" di zona waktu Asia/Jakarta (WIB) — BUKAN dari toISOString() (selalu zona UTC).
+// Sebelumnya pakai new Date().toISOString(), yang bikin "hari ini" bisa mundur 1 hari kalau dibuka
+// jam 00:00-06:59 WIB (di jam itu UTC masih di tanggal kemarin) — bug yang sama seperti yang pernah
+// ditemukan & diperbaiki di Aplikasi Pembina. Semua tanggal "Dari/S.d." default (Laporan, Laporan Toko,
+// Laporan Keuangan, Rapor, dll) di app ini dihitung dari fungsi ini, jadi diperbaiki sekali di sini saja.
+function todayStr(){
+  return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Jakarta' }).format(new Date());
+}
+// Geser tanggal (string YYYY-MM-DD) mundur/maju N hari dan/atau N tahun, dengan aritmatika kalender
+// murni (lewat Date.UTC) — supaya hasilnya tidak ikut bergeser oleh zona waktu perangkat, beda dengan
+// cara lama (new Date(); .setDate(); .toISOString()) yang rawan salah kalau device tidak di WIB.
+function geserTanggalStr(str, opsi){
+  opsi = opsi || {};
+  const [y,m,d] = str.split('-').map(Number);
+  const dt = new Date(Date.UTC(y + (opsi.tahun||0), m-1, d));
+  if(opsi.hari) dt.setUTCDate(dt.getUTCDate() + opsi.hari);
+  return `${dt.getUTCFullYear()}-${String(dt.getUTCMonth()+1).padStart(2,'0')}-${String(dt.getUTCDate()).padStart(2,'0')}`;
+}
 // Bantuan hitung rentang tanggal untuk preset periode (Harian/Mingguan/Bulanan/Tahunan) di Laporan Toko.
 function rangeMinggu(dateStr){
   const [y,m,d] = dateStr.split('-').map(Number);
@@ -837,13 +854,12 @@ function openSantriDetail(id){
 }
 let riwayatPeriode = 'bulan';
 function periodeRange(periode){
-  const now = new Date();
-  let from = new Date(now);
-  if(periode==='hari'){ /* hari ini saja */ }
-  else if(periode==='pekan'){ from.setDate(now.getDate() - 7); }
-  else if(periode==='bulan'){ from.setDate(now.getDate() - 30); }
-  else if(periode==='tahun'){ from.setFullYear(now.getFullYear() - 1); }
-  return { from: from.toISOString().slice(0,10), to: now.toISOString().slice(0,10) };
+  const to = todayStr();
+  let from = to;
+  if(periode==='pekan'){ from = geserTanggalStr(to, {hari:-7}); }
+  else if(periode==='bulan'){ from = geserTanggalStr(to, {hari:-30}); }
+  else if(periode==='tahun'){ from = geserTanggalStr(to, {tahun:-1}); }
+  return { from, to };
 }
 function renderRiwayatSantri(santriId){
   const { from, to } = periodeRange(riwayatPeriode);
@@ -1120,7 +1136,7 @@ function openCardMahram(santriId, idx){
 let lapTab = 'hafalan';
 let lapFrom = '', lapTo = todayStr();
 function renderLaporanPage(){
-  if(!lapFrom){ const d=new Date(); d.setDate(d.getDate()-30); lapFrom=d.toISOString().slice(0,10); }
+  if(!lapFrom){ lapFrom = geserTanggalStr(todayStr(), {hari:-30}); }
   document.getElementById('content').innerHTML = `
     <div class="page-head">
       <div class="page-head-top"><h2>Laporan</h2></div>
@@ -1271,13 +1287,12 @@ function drawTrendChart(rows){
 }
 let tidakHadirPeriode = 'hari';
 function tidakHadirRange(periode){
-  const now = new Date();
-  let from = new Date(now);
-  if(periode==='hari'){ /* hari ini saja */ }
-  else if(periode==='pekan'){ from.setDate(now.getDate() - 7); }
-  else if(periode==='bulan'){ from.setDate(now.getDate() - 30); }
-  else if(periode==='tahun'){ from.setFullYear(now.getFullYear() - 1); }
-  return { from: from.toISOString().slice(0,10), to: now.toISOString().slice(0,10) };
+  const to = todayStr();
+  let from = to;
+  if(periode==='pekan'){ from = geserTanggalStr(to, {hari:-7}); }
+  else if(periode==='bulan'){ from = geserTanggalStr(to, {hari:-30}); }
+  else if(periode==='tahun'){ from = geserTanggalStr(to, {tahun:-1}); }
+  return { from, to };
 }
 /* Santri dianggap "tidak hadir" pada suatu kegiatan dalam periode tertentu kalau:
    - tidak ada catatan absensi sama sekali untuk kegiatan itu dalam periode (belum pernah diabsen), atau
@@ -1481,7 +1496,7 @@ function hitungLaba(){
   return { omzet, labaTunai, labaKredit, totalLaba, operasional, labaBersih };
 }
 function renderKasPage(){
-  if(!kasFrom){ const d=new Date(); d.setDate(d.getDate()-30); kasFrom=d.toISOString().slice(0,10); }
+  if(!kasFrom){ kasFrom = geserTanggalStr(todayStr(), {hari:-30}); }
   document.getElementById('content').innerHTML = `
     <div class="page-head">
       <div class="page-head-top"><h2>Laporan Toko</h2></div>
@@ -1813,7 +1828,7 @@ let lapKeuSearchQuery = '';
 const JENIS_SALDO_LABEL = { setoran: 'Setoran', tarik: 'Tarik Tunai', bayar: 'Bayar' };
 
 function renderLaporanKeuanganPage(){
-  if(!lapKeuFrom){ const d=new Date(); d.setDate(d.getDate()-30); lapKeuFrom=d.toISOString().slice(0,10); }
+  if(!lapKeuFrom){ lapKeuFrom = geserTanggalStr(todayStr(), {hari:-30}); }
   document.getElementById('content').innerHTML = `
     <div class="page-head">
       <div class="page-head-top"><h2>Laporan Keuangan</h2></div>
@@ -2019,7 +2034,7 @@ function filteredRaporSantri(){
   });
 }
 function renderRaporPage(){
-  if(!raporFrom){ const d=new Date(); d.setDate(d.getDate()-30); raporFrom=d.toISOString().slice(0,10); }
+  if(!raporFrom){ raporFrom = geserTanggalStr(todayStr(), {hari:-30}); }
   document.getElementById('content').innerHTML = `
     <div class="page-head">
       <div class="page-head-top"><h2>Rapor</h2></div>
