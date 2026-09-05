@@ -1704,21 +1704,24 @@ const NAMA_BULAN = ['Januari','Februari','Maret','April','Mei','Juni','Juli','Ag
 
 async function loadTagihanData(){
   try {
-    const [tagihanRes, jenisRes, iuranRes, iuranDetailRes] = await Promise.all([
+    const [tagihanRes, jenisRes, iuranRes, iuranDetailRes, saldoSantriRes] = await Promise.all([
       sb.from('tagihan').select('*'),
       sb.from('jenis_tagihan').select('*'),
       sb.from('iuran').select('*'),
-      sb.from('iuran_detail').select('*')
+      sb.from('iuran_detail').select('*'),
+      sb.from('saldo_santri').select('santri_id,saldo') // sumber tunggal saldo -- sama persis yang dipakai Aplikasi Toko, bukan dihitung ulang manual di sini
     ]);
     if(tagihanRes.error) throw tagihanRes.error;
     if(jenisRes.error) throw jenisRes.error;
     if(iuranRes.error) throw iuranRes.error;
     if(iuranDetailRes.error) throw iuranDetailRes.error;
+    if(saldoSantriRes.error) throw saldoSantriRes.error;
     TAGIHAN_DATA = {
       tagihan: tagihanRes.data || [],
       jenis: jenisRes.data || [],
       iuran: iuranRes.data || [],
-      iuranDetail: iuranDetailRes.data || []
+      iuranDetail: iuranDetailRes.data || [],
+      saldoSantri: saldoSantriRes.data || []
     };
   } catch(e){
     console.error('Gagal memuat data tagihan:', e);
@@ -1861,27 +1864,28 @@ async function renderLaporanKeuanganBody(){
   else if(lapKeuTab==='riwayat') renderLapKeuRiwayat(body);
   else renderLapKeuRingkasan(body);
 }
-/* Saldo santri tidak disimpan sebagai satu kolom di tabel santri -- dihitung dari akumulasi
-   SEMUA transaksi_saldo (bukan cuma periode terpilih) yang belum dibatalkan, sama seperti cara
-   Aplikasi Keuangan menghitung saldo tiap santri. */
+/* Saldo santri MURNI pekerjaan Aplikasi Keuangan (semua transaksinya) + pengurangan saat
+   belanja saldo di Toko -- keduanya berujung ke tabel transaksi_saldo, lalu dirangkum server jadi
+   view `saldo_santri`. Aplikasi Pondok di sini cuma laporan (baca saja), jadi TIDAK menghitung
+   ulang secara manual -- cukup jumlahkan angka jadi dari saldo_santri, persis seperti yang dipakai
+   Aplikasi Toko untuk validasi saldo saat belanja. Ini menghindari dua rumus berbeda yang bisa
+   gampang tidak sinkron (pernah terjadi: rumus manual di sini lupa mengecualikan bayar tunai). */
 function hitungSaldoSantriTotal(){
-  const aktif = DB.transaksiSaldo.filter(t=>t.status!=='dibatalkan');
-  const setoran = aktif.filter(t=>t.jenis==='setoran').reduce((s,t)=>s+Number(t.nominal),0);
-  const tarik = aktif.filter(t=>t.jenis==='tarik').reduce((s,t)=>s+Number(t.nominal),0);
-  // bayar tunai tidak memotong saldo -- sama seperti logika di Aplikasi Keuangan
-  const bayar = aktif.filter(t=>t.jenis==='bayar' && t.metode!=='tunai').reduce((s,t)=>s+Number(t.nominal),0);
-  return setoran - tarik - bayar;
+  if(!TAGIHAN_DATA || TAGIHAN_DATA==='error' || !TAGIHAN_DATA.saldoSantri) return 0;
+  return TAGIHAN_DATA.saldoSantri.reduce((s,r)=>s+Number(r.saldo||0),0);
 }
 function transaksiSaldoPeriode(){
   return DB.transaksiSaldo.filter(t=>t.status!=='dibatalkan' && t.tanggal>=lapKeuFrom && t.tanggal<=lapKeuTo);
 }
 function hitungMutasiPeriode(){
   const trx = transaksiSaldoPeriode();
-  const setoran = trx.filter(t=>t.jenis==='setoran').reduce((s,t)=>s+Number(t.nominal),0);
   const tarik = trx.filter(t=>t.jenis==='tarik').reduce((s,t)=>s+Number(t.nominal),0);
-  // bayar tunai tidak memotong saldo -- hanya bayar via saldo yang dihitung di sini
-  const bayar = trx.filter(t=>t.jenis==='bayar' && t.metode!=='tunai').reduce((s,t)=>s+Number(t.nominal),0);
-  return { setoran, tarik, bayar, jumlahTransaksi: trx.length };
+  // bayar tunai tidak memotong saldo, jadi tidak dihitung di sini sama sekali
+  const bayarSaldo = trx.filter(t=>t.jenis==='bayar' && t.metode!=='tunai');
+  // dibedakan dari Toko lewat keterangan "Belanja Toko..." (konvensi yang sama dipakai Aplikasi Keuangan)
+  const tokoSaldo = bayarSaldo.filter(t=>(t.keterangan||'').trim().toLowerCase().startsWith('belanja toko')).reduce((s,t)=>s+Number(t.nominal),0);
+  const tagihanIuranSaldo = bayarSaldo.filter(t=>!(t.keterangan||'').trim().toLowerCase().startsWith('belanja toko')).reduce((s,t)=>s+Number(t.nominal),0);
+  return { tarik, tokoSaldo, tagihanIuranSaldo, jumlahTransaksi: trx.length };
 }
 function renderLapKeuRingkasan(body){
   const totalSaldo = hitungSaldoSantriTotal();
@@ -1896,14 +1900,14 @@ function renderLapKeuRingkasan(body){
       <div class="stat"><div class="num">${m.jumlahTransaksi}</div><div class="label">Transaksi (periode terpilih)</div></div>
     </div>
     <div class="card" style="margin-top:12px">
-      <div class="card-title">Mutasi Saldo &middot; Periode ${lapKeuFrom} s.d. ${lapKeuTo}</div>
-      <div class="list-item"><div class="name" style="flex:1">Setoran (masuk)</div><div style="font-weight:600;color:var(--green-700)">+${formatRupiah(m.setoran)}</div></div>
-      <div class="list-item"><div class="name" style="flex:1">Tarik Tunai (keluar)</div><div style="font-weight:600;color:var(--danger)">-${formatRupiah(m.tarik)}</div></div>
-      <div class="list-item"><div class="name" style="flex:1">Bayar (tagihan/toko via saldo)</div><div style="font-weight:600;color:var(--danger)">-${formatRupiah(m.bayar)}</div></div>
-      <div class="list-item"><div class="name" style="flex:1"><b>Selisih Bersih</b></div><div style="font-weight:700">${formatRupiah(m.setoran - m.tarik - m.bayar)}</div></div>
+      <div class="card-title">Pengurangan Saldo &middot; Periode ${lapKeuFrom} s.d. ${lapKeuTo}</div>
+      <div class="list-item"><div class="name" style="flex:1">Tarik Tunai</div><div style="font-weight:600;color:var(--danger)">${formatRupiah(m.tarik)}</div></div>
+      <div class="list-item"><div class="name" style="flex:1">Toko via Saldo</div><div style="font-weight:600;color:var(--danger)">${formatRupiah(m.tokoSaldo)}</div></div>
+      <div class="list-item"><div class="name" style="flex:1">Bayar Tagihan/Iuran via Saldo</div><div style="font-weight:600;color:var(--danger)">${formatRupiah(m.tagihanIuranSaldo)}</div></div>
     </div>
     <div class="card">
       <div class="card-title">Tagihan (kumulatif, semua periode)</div>
+
       <div class="list-item"><div class="name" style="flex:1">Sudah terbayar</div><div style="font-weight:600;color:var(--green-700)">${formatRupiah(tagihanLunas)}</div></div>
       <div class="list-item"><div class="name" style="flex:1">Belum terbayar</div><div style="font-weight:600;color:var(--danger)">${formatRupiah(tagihanBelum)}</div></div>
     </div>
@@ -1984,10 +1988,9 @@ function unduhLaporanKeuanganExcel(){
   const m = hitungMutasiPeriode();
   XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet([
     { Pos: 'Total Saldo Santri (saat ini)', Nominal: totalSaldo },
-    { Pos: `Setoran (periode ${lapKeuFrom} s.d. ${lapKeuTo})`, Nominal: m.setoran },
-    { Pos: 'Tarik Tunai (periode)', Nominal: m.tarik },
-    { Pos: 'Bayar (periode)', Nominal: m.bayar },
-    { Pos: 'Selisih Bersih (periode)', Nominal: m.setoran - m.tarik - m.bayar }
+    { Pos: `Tarik Tunai (periode ${lapKeuFrom} s.d. ${lapKeuTo})`, Nominal: m.tarik },
+    { Pos: 'Toko via Saldo (periode)', Nominal: m.tokoSaldo },
+    { Pos: 'Bayar Tagihan/Iuran via Saldo (periode)', Nominal: m.tagihanIuranSaldo }
   ]), 'Ringkasan');
 
   const tagihanRows = groupTagihan().map(g=>{
