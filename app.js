@@ -264,7 +264,8 @@ async function loadAll() {
       })) : [],
       transaksiSaldo: (saldoRes.data || []).map(t => ({
         id: t.id, santriId: t.santri_id, jenis: t.jenis, nominal: t.jumlah,
-        keterangan: t.keterangan || '', tanggal: t.tanggal, status: t.status || 'aktif'
+        keterangan: t.keterangan || '', tanggal: t.tanggal, status: t.status || 'aktif',
+        metode: t.metode || null
       })),
       pembina: (pembinaRes.data || []).map(p => ({
         id: p.id, nama: p.nama, program: p.program, tetala: p.tetala || '', alamat: p.alamat || '',
@@ -1867,7 +1868,8 @@ function hitungSaldoSantriTotal(){
   const aktif = DB.transaksiSaldo.filter(t=>t.status!=='dibatalkan');
   const setoran = aktif.filter(t=>t.jenis==='setoran').reduce((s,t)=>s+Number(t.nominal),0);
   const tarik = aktif.filter(t=>t.jenis==='tarik').reduce((s,t)=>s+Number(t.nominal),0);
-  const bayar = aktif.filter(t=>t.jenis==='bayar').reduce((s,t)=>s+Number(t.nominal),0);
+  // bayar tunai tidak memotong saldo -- sama seperti logika di Aplikasi Keuangan
+  const bayar = aktif.filter(t=>t.jenis==='bayar' && t.metode!=='tunai').reduce((s,t)=>s+Number(t.nominal),0);
   return setoran - tarik - bayar;
 }
 function transaksiSaldoPeriode(){
@@ -1877,7 +1879,8 @@ function hitungMutasiPeriode(){
   const trx = transaksiSaldoPeriode();
   const setoran = trx.filter(t=>t.jenis==='setoran').reduce((s,t)=>s+Number(t.nominal),0);
   const tarik = trx.filter(t=>t.jenis==='tarik').reduce((s,t)=>s+Number(t.nominal),0);
-  const bayar = trx.filter(t=>t.jenis==='bayar').reduce((s,t)=>s+Number(t.nominal),0);
+  // bayar tunai tidak memotong saldo -- hanya bayar via saldo yang dihitung di sini
+  const bayar = trx.filter(t=>t.jenis==='bayar' && t.metode!=='tunai').reduce((s,t)=>s+Number(t.nominal),0);
   return { setoran, tarik, bayar, jumlahTransaksi: trx.length };
 }
 function renderLapKeuRingkasan(body){
