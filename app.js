@@ -1399,7 +1399,10 @@ function renderLaporanAbsensi(santri){
    Total Laba  = Laba Tunai + Laba Kredit (khusus periode terpilih)
    Operasional = total kas keluar kategori "operasional" dalam periode
    Laba Bersih = Total Laba - Operasional
-   (laba kotor per transaksi dihitung dari harga jual - harga beli produk saat ini) ------- */
+   (laba kotor per transaksi = total - modal_total, KEDUANYA dibaca langsung dari kolom transaksi_toko
+    yang diisi RPC belanja_toko milik app Toko saat transaksi dibuat. Pondok tidak menghitung ulang
+    dari harga produk sendiri — supaya angka laba selalu identik dengan app Toko, dan tidak berubah
+    kalau harga_beli produk diedit belakangan.) ------- */
 let kasFrom = '', kasTo = todayStr();
 let kasPreset = 'custom'; // 'custom' | 'harian' | 'mingguan' | 'bulanan' | 'tahunan'
 let laporanTokoTab = 'kas'; // 'kas' | 'laba'
@@ -1414,7 +1417,9 @@ async function loadKasData(){
     const [kasAwalRes, mutasiRes, produkRes, transaksiRes] = await Promise.all([
       sb.from('pengaturan_kas').select('*'),
       sb.from('kas_mutasi').select('*'),
-      sb.from('produk').select('id,stok,harga_beli,harga_jual'),
+      // harga_jual TIDAK diambil lagi -- Pondok hanya perlu harga_beli untuk menilai stok gudang
+      // (Nilai Stok). Laba tidak lagi dihitung dari harga produk, lihat labaKotorTransaksi().
+      sb.from('produk').select('id,stok,harga_beli'),
       // Pakai select('*') (bukan sebut nama kolom satu-satu) — sama seperti cara Aplikasi Kasir Toko
       // membaca tabel ini — supaya query tidak gagal total kalau ada kolom yang namanya sedikit beda
       // dari dugaan (field yang tidak dipakai di sini cukup diabaikan, bukan bikin error).
@@ -1437,13 +1442,13 @@ async function loadKasData(){
     KAS_DATA = { error: true, pesan: (e && (e.message || e.details || e.hint)) || JSON.stringify(e) };
   }
 }
-function labaKotorTransaksi(t, produkMap){
-  return (t.items||[]).reduce((s,it)=>{
-    const p = produkMap[it.produk_id];
-    if(!p) return s;
-    const hj = Number(p.harga_jual)||0, hb = Number(p.harga_beli)||0, qty = Number(it.qty)||0;
-    return s + (hj-hb)*qty;
-  }, 0);
+// PENTING: laba SELALU dibaca dari kolom modal_total (total = laba), yang diisi sekali oleh
+// RPC belanja_toko milik Aplikasi Kasir Toko saat transaksi dibuat. Aplikasi Pondok sengaja
+// TIDAK menghitung ulang laba dari harga produk sendiri — itu penyebab bug lama (laba beda
+// dengan app Toko kalau harga_beli produk diubah belakangan). Perhitungan laba tetap jadi
+// kewenangan app Toko; Pondok cuma membaca hasilnya.
+function labaKotorTransaksi(t){
+  return Number(t.total||0) - Number(t.modal_total||0);
 }
 function hitungKas(){
   const modalAwal = KAS_DATA.kasAwal.reduce((s,k)=>s+Number(k.kas_awal||0),0);
@@ -1467,9 +1472,7 @@ function hitungKas(){
 
   const totalNilaiStok = KAS_DATA.produk.reduce((s,p)=>s+Number(p.stok)*Number(p.harga_beli),0);
 
-  const produkMap = {};
-  KAS_DATA.produk.forEach(p=>{ produkMap[p.id] = p; });
-  const totalLaba = transaksiAktif.reduce((s,t)=>s+labaKotorTransaksi(t, produkMap), 0);
+  const totalLaba = transaksiAktif.reduce((s,t)=>s+labaKotorTransaksi(t), 0);
 
   const totalPiutang = transaksiAktif.filter(t=>t.metode==='Hutang' && t.status_bayar==='belum_bayar').reduce((s,t)=>s+Number(t.total),0);
 
@@ -1481,16 +1484,14 @@ function hitungKas(){
   return { modalAwal, totalSaldoKas, totalNilaiStok, totalLaba, modalSaatIni, totalPiutang, masukPeriode, keluarPeriode };
 }
 function hitungLaba(){
-  const produkMap = {};
-  KAS_DATA.produk.forEach(p=>{ produkMap[p.id] = p; });
   // PENTING: tabel transaksi_toko TIDAK punya kolom "tanggal" — kolom tanggalnya bernama
   // created_at (persis seperti cara Aplikasi Kasir Toko sendiri membaca tabel ini, lihat
   // mapTransaksiTokoDariSupabase/mapTransaksiItemDariSupabase di app Toko). Buang transaksi
   // yang dibatalkan — supaya periode & filter batal selalu selaras dengan Laporan di app Toko.
   const transaksiPeriode = KAS_DATA.transaksiToko.filter(t=>!t.dibatalkan && (t.created_at||'').slice(0,10)>=kasFrom && (t.created_at||'').slice(0,10)<=kasTo);
   const omzet = transaksiPeriode.reduce((s,t)=>s+Number(t.total),0);
-  const labaTunai = transaksiPeriode.filter(t=>t.metode==='Tunai'||t.metode==='Saldo').reduce((s,t)=>s+labaKotorTransaksi(t, produkMap),0);
-  const labaKredit = transaksiPeriode.filter(t=>t.metode==='Hutang').reduce((s,t)=>s+labaKotorTransaksi(t, produkMap),0);
+  const labaTunai = transaksiPeriode.filter(t=>t.metode==='Tunai'||t.metode==='Saldo').reduce((s,t)=>s+labaKotorTransaksi(t),0);
+  const labaKredit = transaksiPeriode.filter(t=>t.metode==='Hutang').reduce((s,t)=>s+labaKotorTransaksi(t),0);
   const totalLaba = labaTunai + labaKredit;
   const operasional = KAS_DATA.mutasi.filter(m=>m.kategori==='operasional' && m.arah==='keluar' && (m.tanggal||'').slice(0,10)>=kasFrom && (m.tanggal||'').slice(0,10)<=kasTo).reduce((s,m)=>s+Number(m.jumlah),0);
   const labaBersih = totalLaba - operasional;
