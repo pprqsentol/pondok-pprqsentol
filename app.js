@@ -59,6 +59,8 @@ function santriRowToApp(r) {
     namaWali: r.nama_wali || '', fotoWali: r.foto_wali || '', kodeWali: r.kode_wali || '',
     kelas: r.kelas || '7', kamar: r.kamar || '', hpWali: r.no_hp_wali || '', program: r.program || 'Non-Takhossus',
     hafalanAwal: r.hafalan_awal || 0,
+    sembunyikanDariPembina: r.sembunyikan_dari_pembina || false,
+    bebasTagihanIuran: r.bebas_tagihan_iuran || false,
     mahram: []
   };
 }
@@ -463,6 +465,14 @@ function goPage(p){
 function visibleSantri(){
   if(isAdmin()) return DB.santri;
   return DB.santri.filter(s=>s.program===SESSION.program);
+}
+/* Sama seperti visibleSantri(), tapi tambah menyembunyikan santri yang ditandai
+   "sembunyikan_dari_pembina" (kolom sama yang dipakai view santri_umum di Aplikasi
+   Pembina) -- dipakai KHUSUS di Laporan & Rapor (bukan di Data Santri/Beranda), supaya
+   santri yang memang tidak dipantau pembina juga tidak nongol di laporan/rapor hafalan
+   & absensi, tapi tetap kelihatan normal di Data Santri untuk keperluan administrasi. */
+function visibleSantriUntukLaporan(){
+  return visibleSantri().filter(s=>!s.sembunyikanDariPembina);
 }
 /* santri yang boleh dilihat, sekaligus difilter oleh program_khusus kegiatan (kalau ada) */
 function visibleSantriForKegiatan(kegiatanId){
@@ -1155,7 +1165,7 @@ function renderLaporanPage(){
   renderLaporanBody();
 }
 function renderLaporanBody(){
-  const santri = visibleSantri();
+  const santri = visibleSantriUntukLaporan();
   if(lapTab==='hafalan') renderLaporanHafalan(santri); else renderLaporanAbsensi(santri);
 }
 function renderLaporanHafalan(santri){
@@ -1183,7 +1193,7 @@ function renderLaporanHafalan(santri){
   drawTrendChart(rows);
 }
 function hafalanExportRows(){
-  const santri = visibleSantri();
+  const santri = visibleSantriUntukLaporan();
   return santri.map((s,i)=>{
     const items = DB.hafalan.filter(h=>h.santriId===s.id && h.tanggal>=lapFrom && h.tanggal<=lapTo);
     const tambah = items.reduce((sum,h)=>sum+(h.jumlahHalaman||1),0);
@@ -2034,7 +2044,7 @@ let raporSearchQuery = '';
 let raporProgramFilter = 'semua'; // 'semua' | 'Takhossus' | 'Non-Takhossus'
 function filteredRaporSantri(){
   const q = raporSearchQuery.trim().toLowerCase();
-  return visibleSantri().filter(s=>{
+  return visibleSantriUntukLaporan().filter(s=>{
     if(raporProgramFilter!=='semua' && s.program!==raporProgramFilter) return false;
     if(!q) return true;
     return s.nama.toLowerCase().includes(q) || (s.noInduk||'').toLowerCase().includes(q);
@@ -2066,7 +2076,7 @@ function renderRaporPage(){
 }
 function renderRaporBody(){
   const santri = filteredRaporSantri();
-  const allCount = visibleSantri().length;
+  const allCount = visibleSantriUntukLaporan().length;
   const rows = santri.map(s=>{
     const total = totalHafalanSantri(s.id);
     const nh = nilaiHafalanSantri(s.id, raporFrom, raporTo);
@@ -2096,7 +2106,7 @@ function renderRaporBody(){
   `;
 }
 function exportRaporExcel(){
-  const santri = visibleSantri();
+  const santri = visibleSantriUntukLaporan();
   const rows = santri.map((s,i)=>{
     const total = totalHafalanSantri(s.id);
     const nh = nilaiHafalanSantri(s.id, raporFrom, raporTo);

@@ -1,4 +1,4 @@
-const CACHE = 'pondok-rq-v23-fix-sw-network-first';
+const CACHE = 'pondok-rq-v24-sembunyikan-laporan';
 const FILES = [
   './',
   './index.html',
