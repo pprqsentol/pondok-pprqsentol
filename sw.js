@@ -1,53 +1,44 @@
-const CACHE_NAME = 'kasir-toko-v48-boleh-hutang-santri';
-const ASSETS = [
+const CACHE = 'pondok-rq-v24-sembunyikan-laporan';
+const FILES = [
   './',
   './index.html',
+  './styles.css',
+  './app.js',
   './manifest.json',
   './icon-192.png',
   './icon-512.png'
 ];
 
-// Instal: simpan semua file inti ke cache
-self.addEventListener('install', event => {
-  event.waitUntil(
-    caches.open(CACHE_NAME)
-      .then(cache => cache.addAll(ASSETS))
-      .then(() => self.skipWaiting())
-  );
+self.addEventListener('install', e=>{
+  e.waitUntil(caches.open(CACHE).then(c=>c.addAll(FILES)));
+  self.skipWaiting();
 });
-
-// Aktivasi: hapus cache versi lama
-self.addEventListener('activate', event => {
-  event.waitUntil(
-    caches.keys().then(keys =>
-      Promise.all(keys.filter(k => k !== CACHE_NAME).map(k => caches.delete(k)))
-    ).then(() => self.clients.claim())
-  );
+self.addEventListener('activate', e=>{
+  e.waitUntil(caches.keys().then(keys=>Promise.all(keys.filter(k=>k!==CACHE).map(k=>caches.delete(k)))));
+  self.clients.claim();
 });
-
-// Fetch: cache-first, dengan fallback ke jaringan lalu ke index.html untuk navigasi
-self.addEventListener('fetch', event => {
-  if (event.request.method !== 'GET') return;
-  if (!event.request.url.startsWith('http')) return; // lewati request non-http (mis. dari ekstensi browser)
-
-  event.respondWith(
-    caches.match(event.request).then(cached => {
-      if (cached) return cached;
-      return fetch(event.request)
-        .then(response => {
-          // simpan salinan baru ke cache untuk pemakaian offline berikutnya
-          if (response && response.status === 200 && response.type === 'basic') {
-            const clone = response.clone();
-            caches.open(CACHE_NAME).then(cache => cache.put(event.request, clone));
-          }
-          return response;
-        })
-        .catch(() => {
-          // offline dan tidak ada di cache: untuk navigasi halaman, tampilkan index.html
-          if (event.request.mode === 'navigate') {
-            return caches.match('./index.html');
-          }
-        });
-    })
+self.addEventListener('fetch', e=>{
+  const url = new URL(e.request.url);
+  /* PENTING: hanya tangani file aplikasi sendiri (GET, satu origin).
+     Permintaan ke Supabase (login, ambil/simpan data) dibiarkan lewat
+     apa adanya -- inilah penyebab bug "harus klik 2x" sebelumnya,
+     karena request login sempat "dicegat" dan rusak oleh cache ini. */
+  if (e.request.method !== 'GET' || url.origin !== self.location.origin) {
+    return;
+  }
+  /* Network-first (bukan stale-while-revalidate lagi): selalu ambil file
+     TERBARU dari server dulu selama ada internet, cache cuma dipakai kalau
+     offline. Ini supaya app.js, styles.css, dll selalu satu paket versi yang
+     sama persis -- sebelumnya file-file ini bisa ter-update satu-satu secara
+     terpisah di cache, jadi ada kemungkinan sesaat setelah deploy baru,
+     pengguna dapat CAMPURAN file lama+baru yang tidak nyambung. */
+  e.respondWith(
+    fetch(e.request).then(res=>{
+      if(res.ok){
+        const copy = res.clone();
+        caches.open(CACHE).then(c=>c.put(e.request, copy));
+      }
+      return res;
+    }).catch(()=>caches.match(e.request))
   );
 });
