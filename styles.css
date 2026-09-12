@@ -143,6 +143,8 @@ label{display:block;font-size:12px;color:var(--muted);margin:10px 0 4px;}
 .tag{display:inline-block;padding:3px 9px;border-radius:20px;font-size:11px;font-weight:600;}
 .tag-takhossus{background:#fbe8d0;color:#8a5a13;}
 .tag-nontakhossus{background:var(--green-100);color:var(--green-700);}
+.tag-idad{background:#e3e8fb;color:#2f3f8a;}
+.badge-testpending{display:inline-block;color:var(--danger);font-weight:600;font-size:11px;margin-left:4px;}
 .pill-btn{border:1px solid var(--border);border-radius:20px;padding:4px 12px;font-size:12px;background:#fff;}
 .pill-btn.on{background:var(--green-600);color:#fff;border-color:var(--green-600);}
 

@@ -181,6 +181,57 @@ function formatJuzSekarang(santriId){
   return `Juz ${c.juz}, halaman ${c.halaman}`;
 }
 
+/* ====== Kategori Program Santri ======
+   Nilai yang DISIMPAN di database sengaja "Idad" (tanpa tanda kutip) supaya
+   tidak perlu escaping tanda kutip satu di banyak tempat (onclick, dsb) --
+   label yang DITAMPILKAN ke pembina/admin tetap "I'dad" lewat programLabel().
+   I'dad = santri yang belum bisa membaca Al-Qur'an, kegiatannya belajar
+   membaca (bukan hafalan), lihat kegiatan berjenis 'idad' di Aplikasi Pembina. */
+const PROGRAM_LIST = ['Takhossus', 'Non-Takhossus', 'Idad'];
+function programLabel(p){ return p === 'Idad' ? "I'dad" : (p || '-'); }
+function programTagClass(p){
+  if(p === 'Takhossus') return 'tag-takhossus';
+  if(p === 'Idad') return 'tag-idad';
+  return 'tag-nontakhossus';
+}
+
+/* ====== Tes Kenaikan Juz ======
+   Begitu santri menuntaskan sebuah juz (halaman sampai 20, keterangan bukan
+   "Ulang"), Aplikasi Pembina membuatkan catatan tes di tabel
+   `tes_kenaikan_juz` (status 'menunggu') sebelum santri boleh lanjut ke juz
+   berikutnya. Dua kategori:
+   a) Takhossus, DAN juz yang baru selesai adalah salah satu dari 3/8/13/18/23/28
+      -> wajib membaca 10 juz TERAKHIR hafalannya (kalau total hafalan belum
+      sampai 10 juz, cukup 5 juz -- dan tidak boleh lebih besar dari total
+      juz yang sudah dihafal). Batas waktu 15 hari.
+   b) Selain itu (Non-Takhossus, atau Takhossus di luar juz kategori a)
+      -> wajib membaca ULANG juz yang baru saja selesai itu (1 juz), dengan
+      lancar. Batas waktu 7 hari.
+   Fungsi ini juga dipakai Aplikasi Pembina -- kalau logikanya diubah, ubah
+   di kedua tempat (app.js Aplikasi Pondok & Aplikasi Pembina). */
+const JUZ_TES_KATEGORI_A = [3, 8, 13, 18, 23, 28];
+function tentukanTesKenaikanJuz(program, juzSelesai, totalJuzSelesai){
+  if(program === 'Takhossus' && JUZ_TES_KATEGORI_A.includes(juzSelesai)){
+    const syarat = Math.min(totalJuzSelesai, totalJuzSelesai >= 10 ? 10 : 5);
+    return { kategori: 'a', syaratJuz: Math.max(1, syarat), batasHari: 15 };
+  }
+  return { kategori: 'b', syaratJuz: 1, batasHari: 7 };
+}
+/* Sisa hari (bisa negatif kalau sudah lewat batas) dihitung dari tanggal_mulai + batas_hari. */
+function sisaHariTes(tes){
+  const mulai = new Date(tes.tanggalMulai);
+  const batas = new Date(mulai.getTime() + tes.batasHari*86400000);
+  return Math.ceil((batas - new Date(todayStr()))/86400000);
+}
+function labelKategoriTes(tes){
+  return tes.kategori === 'a'
+    ? `Kategori A &mdash; baca ${tes.syaratJuz} juz terakhir hafalan`
+    : `Kategori B &mdash; baca ulang Juz ${tes.juzSelesai} (1 juz, lancar)`;
+}
+function tesJuzMenungguSantri(santriId){
+  return DB.tesKenaikanJuz.find(t=>t.santriId===santriId && t.status==='menunggu');
+}
+
 function mahramRowToApp(r) {
   return { id: r.id, nama: r.nama, hubungan: r.hubungan || '', hp: r.no_hp || '', foto: r.foto_url || '' };
 }
@@ -226,18 +277,20 @@ async function idbLoad(){
 }
 
 /* ====== 3. STATE APLIKASI (diisi dari Supabase setelah login) ====== */
-let DB = { kegiatan: [], santri: [], absensi: [], hafalan: [], murojaah: [], transaksiSaldo: [], pembina: [] };
+let DB = { kegiatan: [], santri: [], absensi: [], hafalan: [], murojaah: [], idad: [], tesKenaikanJuz: [], transaksiSaldo: [], pembina: [] };
 let SESSION = null; // { userId, role, program, santriId, nama }
 
 async function loadAll() {
   try {
-    const [kegiatanRes, santriRes, mahramRes, absensiRes, hafalanRes, murojaahRes, saldoRes, pembinaRes] = await Promise.all([
+    const [kegiatanRes, santriRes, mahramRes, absensiRes, hafalanRes, murojaahRes, idadRes, tesJuzRes, saldoRes, pembinaRes] = await Promise.all([
       sb.from('kegiatan').select('*').eq('aktif', true).order('nama'),
       sb.from('santri').select('*').eq('aktif', true).order('nama'),
       sb.from('mahram').select('*'),
       sb.from('absensi').select('*'),
       sb.from('hafalan').select('*'),
       sb.from('murojaah').select('*'),
+      sb.from('idad').select('*'),
+      sb.from('tes_kenaikan_juz').select('*'),
       sb.from('transaksi_saldo').select('*'),
       sb.from('pembina').select('*').order('nama')
     ]);
@@ -263,6 +316,16 @@ async function loadAll() {
       murojaah: (murojaahRes && !murojaahRes.error) ? (murojaahRes.data || []).map(m => ({
         id: m.id, santriId: m.santri_id, kegiatanId: m.kegiatan_id, tanggal: m.tanggal,
         juz: m.juz, cakupan: m.cakupan
+      })) : [],
+      idad: (idadRes && !idadRes.error) ? (idadRes.data || []).map(i => ({
+        id: i.id, santriId: i.santri_id, kegiatanId: i.kegiatan_id || null, tanggal: i.tanggal,
+        metode: i.metode || '', catatan: i.catatan || ''
+      })) : [],
+      tesKenaikanJuz: (tesJuzRes && !tesJuzRes.error) ? (tesJuzRes.data || []).map(t => ({
+        id: t.id, santriId: t.santri_id, juzSelesai: t.juz_selesai, kategori: t.kategori,
+        syaratJuz: t.syarat_juz, tanggalMulai: t.tanggal_mulai, batasHari: t.batas_hari,
+        status: t.status, tanggalLulus: t.tanggal_lulus || null,
+        dicatatOleh: t.dicatat_oleh || '', catatan: t.catatan || ''
       })) : [],
       transaksiSaldo: (saldoRes.data || []).map(t => ({
         id: t.id, santriId: t.santri_id, jenis: t.jenis, nominal: t.jumlah,
@@ -571,8 +634,7 @@ function renderSantriPage(){
         </div>
         <select onchange="santriProgramFilter=this.value; renderSantriListBody()">
           <option value="semua" ${santriProgramFilter==='semua'?'selected':''}>Semua Program</option>
-          <option value="Takhossus" ${santriProgramFilter==='Takhossus'?'selected':''}>Takhossus</option>
-          <option value="Non-Takhossus" ${santriProgramFilter==='Non-Takhossus'?'selected':''}>Non-Takhossus</option>
+          ${PROGRAM_LIST.map(p=>`<option value="${p}" ${santriProgramFilter===p?'selected':''}>${programLabel(p)}</option>`).join('')}
         </select>
       </div>
     </div>
@@ -601,7 +663,7 @@ function renderSantriListBody(){
               <div class="sub">No. induk ${escapeHtml(s.noInduk)}</div>
             </div>
           </div>
-          <span class="tag ${s.program==='Takhossus'?'tag-takhossus':'tag-nontakhossus'}">${escapeHtml(s.program)}</span>
+          <span class="tag ${programTagClass(s.program)}">${escapeHtml(programLabel(s.program))}</span>
           <button class="btn btn-sm" title="Edit" onclick="event.stopPropagation(); openSantriForm(${JSON.stringify(s).replace(/"/g,'&quot;')})">&#9998;</button>
         </div>`).join('')}
     </div>
@@ -611,7 +673,7 @@ function santriExportRows(){
   return visibleSantri().map((s,i)=>({
     'No': i+1, 'Nama': s.nama, 'No. Induk': s.noInduk, 'Jenis Kelamin': s.jenisKelamin==='P'?'Perempuan':'Laki-laki',
     'Kelas': s.kelas==='Lulus'?'Lulus':`Kelas ${s.kelas||''}`, 'Kamar': s.kamar||'',
-    'Program': s.program, 'Tetala': s.tetala||'', 'Alamat': s.alamat||'',
+    'Program': programLabel(s.program), 'Tetala': s.tetala||'', 'Alamat': s.alamat||'',
     'Tanggal Masuk': s.tglMasuk||'', 'Nama Ayah': s.namaAyah||'', 'Nama Ibu': s.namaIbu||'',
     'Nama Wali': s.namaWali||'', 'No. HP Wali': s.hpWali||''
   }));
@@ -683,9 +745,11 @@ function openSantriForm(existing){
     <label>No. HP wali</label><input id="f_hpWali" type="tel" inputmode="numeric" value="${escapeHtml(s.hpWali)||''}" placeholder="08xxxxxxxxxx">
     ${isNew?'<p class="muted" style="margin:6px 0 0">Kode wali akan dibuat otomatis (acak) setelah data ini disimpan.</p>':(s.kodeWali?`<p class="muted" style="margin:6px 0 0">Kode wali: <b style="font-size:15px;letter-spacing:1px">${s.kodeWali}</b> (untuk login Aplikasi Wali, tetap sama, tidak berubah kalau data diedit)</p>`:'')}
     <label>Program</label>
+    <p class="muted" style="margin:0 0 4px">Pilih <b>I'dad</b> untuk santri yang belum bisa membaca Al-Qur'an &mdash; kegiatannya belajar membaca (bukan hafalan), lihat tab Hafalan &rarr; kegiatan I'dad di Aplikasi Pembina.</p>
     <div class="chip-group" style="margin-top:4px">
       <button type="button" class="pill-btn ${s.program==='Takhossus'?'on':''}" id="prog_tak" ${!isAdmin()?'disabled':''} onclick="setProgram('Takhossus')">Takhossus</button>
       <button type="button" class="pill-btn ${s.program==='Non-Takhossus'?'on':''}" id="prog_non" ${!isAdmin()?'disabled':''} onclick="setProgram('Non-Takhossus')">Non-Takhossus</button>
+      <button type="button" class="pill-btn ${s.program==='Idad'?'on':''}" id="prog_idad" ${!isAdmin()?'disabled':''} onclick="setProgram('Idad')">I'dad</button>
     </div>
     <input type="hidden" id="f_program" value="${s.program}">
     <label>Total Hafalan Awal (sebelum pakai aplikasi ini)</label>
@@ -705,6 +769,7 @@ function setProgram(p){
   document.getElementById('f_program').value = p;
   document.getElementById('prog_tak').classList.toggle('on', p==='Takhossus');
   document.getElementById('prog_non').classList.toggle('on', p==='Non-Takhossus');
+  document.getElementById('prog_idad').classList.toggle('on', p==='Idad');
 }
 function readImageTo(input, hiddenId){
   const file = input.files[0]; if(!file) return;
@@ -803,7 +868,7 @@ function openSantriDetail(id){
       <h2 style="margin-top:10px">${escapeHtml(s.nama)}</h2>
       <p class="muted">No. induk ${escapeHtml(s.noInduk)}</p>
       <div style="margin-top:6px">
-        <span class="tag ${s.program==='Takhossus'?'tag-takhossus':'tag-nontakhossus'}" style="cursor:pointer" onclick="toggleProgramInline('${s.id}')">${escapeHtml(s.program)} (ubah)</span>
+        <span class="tag ${programTagClass(s.program)}" style="cursor:pointer" onclick="toggleProgramInline('${s.id}')">${escapeHtml(programLabel(s.program))} (ubah)</span>
       </div>
     </div>
     <div class="tabs">
@@ -884,46 +949,90 @@ function renderRiwayatSantri(santriId){
   const statusLabel = {h:'Hadir', a:'Alpha', i:'Izin'};
   const namaKegiatan = kid => (DB.kegiatan.find(k=>k.id===kid)||{}).nama || '-';
   const totalPeriode = hafalan.reduce((sum,h)=>sum+(h.jumlahHalaman||1),0);
-  const t = totalHafalanSantri(santriId);
-  const nh = nilaiHafalanSantri(santriId, from, to);
+  const isIdad = s && s.program === 'Idad';
   const na = nilaiAbsensiSantri(santriId, from, to);
+
+  let blokHafalan;
+  if(isIdad){
+    const idad = DB.idad.filter(i=>i.santriId===santriId && i.tanggal>=from && i.tanggal<=to).sort((a,b)=>b.tanggal.localeCompare(a.tanggal));
+    blokHafalan = `
+      <div class="section-heading">Penilaian (periode ini)</div>
+      <div class="grid2">
+        <div class="highlight-box">
+          <div class="hb-label">Program I'dad</div>
+          <div class="hb-value">Belum masuk hafalan</div>
+          <div class="muted" style="font-size:12px;margin-top:4px">${idad.length} sesi belajar membaca pada periode ini</div>
+        </div>
+        <div class="highlight-box">
+          <div class="hb-label">Nilai Absensi</div>
+          <div class="hb-value">${na.predikat} &middot; ${predikatLabel(na.predikat)}</div>
+          <div class="muted" style="font-size:12px;margin-top:4px">Hadir ${na.hadir} dari ${na.total} (${na.pct}%)</div>
+        </div>
+      </div>
+      <div class="section-heading">Riwayat Belajar Membaca (I'dad, periode ini)</div>
+      ${idad.length===0?'<p class="muted">Belum ada catatan belajar membaca pada periode ini.</p>':`
+        <div class="table-wrap"><table><tr><th>Tanggal</th><th>Metode</th><th>Catatan</th></tr>
+        ${idad.map(i=>`<tr><td>${i.tanggal}</td><td>${escapeHtml(i.metode)||'-'}</td><td>${escapeHtml(i.catatan)||'-'}</td></tr>`).join('')}
+        </table></div>`}
+    `;
+  } else {
+    const t = totalHafalanSantri(santriId);
+    const nh = nilaiHafalanSantri(santriId, from, to);
+    const tesPending = tesJuzMenungguSantri(santriId);
+    const riwayatTes = DB.tesKenaikanJuz.filter(x=>x.santriId===santriId).sort((a,b)=>b.tanggalMulai.localeCompare(a.tanggalMulai));
+    blokHafalan = `
+      <div class="section-heading">Penilaian (periode ini)</div>
+      <div class="grid2">
+        <div class="highlight-box">
+          <div class="hb-label">Nilai Hafalan</div>
+          <div class="hb-value">${nh.predikat} &middot; ${predikatLabel(nh.predikat)}</div>
+          <div class="muted" style="font-size:12px;margin-top:4px">${nh.tambahan} dari target ${nh.target} halaman (${nh.pct}%)</div>
+        </div>
+        <div class="highlight-box">
+          <div class="hb-label">Nilai Absensi</div>
+          <div class="hb-value">${na.predikat} &middot; ${predikatLabel(na.predikat)}</div>
+          <div class="muted" style="font-size:12px;margin-top:4px">Hadir ${na.hadir} dari ${na.total} (${na.pct}%)</div>
+        </div>
+      </div>
+
+      <div class="section-heading">Riwayat Hafalan (ditambahkan pada periode ini: ${totalPeriode} halaman)</div>
+      <div class="highlight-box">
+        <div class="hb-label">Total hafalan keseluruhan</div>
+        <div class="hb-value">${t.juz} JUZ ${t.halaman} HALAMAN</div>
+      </div>
+      <div class="highlight-box">
+        <div class="hb-label">Sedang dihafal</div>
+        <div class="hb-value">${formatJuzSekarang(santriId).toUpperCase()}</div>
+      </div>
+      ${tesPending ? `
+      <div class="highlight-box" style="border:1px solid var(--danger)">
+        <div class="hb-label">&#9888; Menunggu Tes Kenaikan Juz</div>
+        <div class="hb-value" style="font-size:14px">${labelKategoriTes(tesPending)}</div>
+        <div class="muted" style="font-size:12px;margin-top:4px">Mulai ${tesPending.tanggalMulai} &middot; batas ${tesPending.batasHari} hari ${sisaHariTes(tesPending)<0 ? `&mdash; <b style="color:var(--danger)">lewat ${Math.abs(sisaHariTes(tesPending))} hari</b>` : `&mdash; sisa ${sisaHariTes(tesPending)} hari`}</div>
+      </div>` : ''}
+      <canvas id="chartSantriHafalan" width="600" height="180" style="width:100%;height:150px;margin-top:8px"></canvas>
+      ${hafalan.length===0?'<p class="muted">Belum ada hafalan dicatat pada periode ini.</p>':`
+        <div class="table-wrap"><table><tr><th>Tanggal</th><th>Kegiatan</th><th>Juz</th><th>Halaman</th></tr>
+        ${hafalan.map(h=>`<tr><td>${h.tanggal}</td><td>${escapeHtml(namaKegiatan(h.kegiatanId))}</td><td>${h.juz}</td><td>${h.halamanDari===h.halamanSampai?h.halamanDari:h.halamanDari+'-'+h.halamanSampai}</td></tr>`).join('')}
+        </table></div>`}
+
+      <div class="section-heading">Riwayat Murojaah (periode ini)</div>
+      ${murojaah.length===0?'<p class="muted">Belum ada dicatat pada periode ini.</p>':`
+        <div class="table-wrap"><table><tr><th>Tanggal</th><th>Kegiatan</th><th>Juz</th><th>Cakupan</th></tr>
+        ${murojaah.map(m=>`<tr><td>${m.tanggal}</td><td>${escapeHtml(namaKegiatan(m.kegiatanId))}</td><td>${m.juz}</td><td>${escapeHtml(m.cakupan)}</td></tr>`).join('')}
+        </table></div>`}
+
+      <div class="section-heading">Riwayat Tes Kenaikan Juz</div>
+      ${riwayatTes.length===0?'<p class="muted">Belum pernah ada tes kenaikan juz.</p>':`
+        <div class="table-wrap"><table><tr><th>Juz Selesai</th><th>Kategori</th><th>Wajib Baca</th><th>Mulai</th><th>Batas</th><th>Status</th></tr>
+        ${riwayatTes.map(t=>`<tr><td>${t.juzSelesai}</td><td>${t.kategori.toUpperCase()}</td><td>${t.syaratJuz} juz</td><td>${t.tanggalMulai}</td><td>${t.batasHari} hari</td><td>${t.status==='lulus'?`Lulus (${t.tanggalLulus||'-'})`:'Menunggu'}</td></tr>`).join('')}
+        </table></div>`}
+    `;
+  }
+
   document.getElementById('riwayatBody').innerHTML = `
     <p class="muted">Periode: ${from} s.d. ${to}</p>
-
-    <div class="section-heading">Penilaian (periode ini)</div>
-    <div class="grid2">
-      <div class="highlight-box">
-        <div class="hb-label">Nilai Hafalan</div>
-        <div class="hb-value">${nh.predikat} &middot; ${predikatLabel(nh.predikat)}</div>
-        <div class="muted" style="font-size:12px;margin-top:4px">${nh.tambahan} dari target ${nh.target} halaman (${nh.pct}%)</div>
-      </div>
-      <div class="highlight-box">
-        <div class="hb-label">Nilai Absensi</div>
-        <div class="hb-value">${na.predikat} &middot; ${predikatLabel(na.predikat)}</div>
-        <div class="muted" style="font-size:12px;margin-top:4px">Hadir ${na.hadir} dari ${na.total} (${na.pct}%)</div>
-      </div>
-    </div>
-
-    <div class="section-heading">Riwayat Hafalan (ditambahkan pada periode ini: ${totalPeriode} halaman)</div>
-    <div class="highlight-box">
-      <div class="hb-label">Total hafalan keseluruhan</div>
-      <div class="hb-value">${t.juz} JUZ ${t.halaman} HALAMAN</div>
-    </div>
-    <div class="highlight-box">
-      <div class="hb-label">Sedang dihafal</div>
-      <div class="hb-value">${formatJuzSekarang(santriId).toUpperCase()}</div>
-    </div>
-    <canvas id="chartSantriHafalan" width="600" height="180" style="width:100%;height:150px;margin-top:8px"></canvas>
-    ${hafalan.length===0?'<p class="muted">Belum ada hafalan dicatat pada periode ini.</p>':`
-      <div class="table-wrap"><table><tr><th>Tanggal</th><th>Kegiatan</th><th>Juz</th><th>Halaman</th></tr>
-      ${hafalan.map(h=>`<tr><td>${h.tanggal}</td><td>${escapeHtml(namaKegiatan(h.kegiatanId))}</td><td>${h.juz}</td><td>${h.halamanDari===h.halamanSampai?h.halamanDari:h.halamanDari+'-'+h.halamanSampai}</td></tr>`).join('')}
-      </table></div>`}
-
-    <div class="section-heading">Riwayat Murojaah (periode ini)</div>
-    ${murojaah.length===0?'<p class="muted">Belum ada dicatat pada periode ini.</p>':`
-      <div class="table-wrap"><table><tr><th>Tanggal</th><th>Kegiatan</th><th>Juz</th><th>Cakupan</th></tr>
-      ${murojaah.map(m=>`<tr><td>${m.tanggal}</td><td>${escapeHtml(namaKegiatan(m.kegiatanId))}</td><td>${m.juz}</td><td>${escapeHtml(m.cakupan)}</td></tr>`).join('')}
-      </table></div>`}
+    ${blokHafalan}
 
     <div class="section-heading">Riwayat Absensi (periode ini)</div>
     <canvas id="chartSantriAbsensi" width="600" height="180" style="width:100%;height:150px"></canvas>
@@ -996,7 +1105,9 @@ function drawSantriAbsensiChart(santriId, from, to){
 }
 async function toggleProgramInline(id){
   const s = DB.santri.find(x=>x.id===id);
-  const baru = s.program==='Takhossus' ? 'Non-Takhossus' : 'Takhossus';
+  /* Klik tag Program di detail santri menggilir 3 pilihan: Takhossus -> Non-Takhossus -> I'dad -> kembali ke Takhossus. */
+  const urutan = { 'Takhossus': 'Non-Takhossus', 'Non-Takhossus': 'Idad', 'Idad': 'Takhossus' };
+  const baru = urutan[s.program] || 'Takhossus';
   const { error } = await sb.from('santri').update({ program: baru }).eq('id', id);
   if(error){ alert('Gagal menyimpan: ' + error.message); return; }
   await loadAll();
@@ -1061,7 +1172,7 @@ function openCardSantri(santriId){
             <div class="info">
               <div class="nm">${escapeHtml(s.nama)}</div>
               <div>No. Induk: <b>${escapeHtml(s.noInduk)}</b></div>
-              <div>${escapeHtml(s.program)||''}</div>
+              <div>${escapeHtml(programLabel(s.program))||''}</div>
               <div>${escapeHtml(s.alamat)||''}</div>
             </div>
           </div>
@@ -1154,6 +1265,8 @@ function renderLaporanPage(){
       <div class="tabs">
         <button class="tab ${lapTab==='hafalan'?'active':''}" onclick="lapTab='hafalan'; renderLaporanPage()">Hafalan</button>
         <button class="tab ${lapTab==='absensi'?'active':''}" onclick="lapTab='absensi'; renderLaporanPage()">Absensi</button>
+        <button class="tab ${lapTab==='idad'?'active':''}" onclick="lapTab='idad'; renderLaporanPage()">I'dad</button>
+        <button class="tab ${lapTab==='tesjuz'?'active':''}" onclick="lapTab='tesjuz'; renderLaporanPage()">Tes Kenaikan Juz</button>
       </div>
       <div class="filter-bar">
         <div class="filter-date"><label>Dari</label><input type="date" value="${lapFrom}" onchange="lapFrom=this.value; renderLaporanBody()"></div>
@@ -1166,7 +1279,66 @@ function renderLaporanPage(){
 }
 function renderLaporanBody(){
   const santri = visibleSantriUntukLaporan();
-  if(lapTab==='hafalan') renderLaporanHafalan(santri); else renderLaporanAbsensi(santri);
+  if(lapTab==='hafalan') renderLaporanHafalan(santri.filter(s=>s.program!=='Idad'));
+  else if(lapTab==='idad') renderLaporanIdad(santri.filter(s=>s.program==='Idad'));
+  else if(lapTab==='tesjuz') renderLaporanTesJuz(santri.filter(s=>s.program!=='Idad'));
+  else renderLaporanAbsensi(santri);
+}
+/* Laporan khusus santri I'dad (belajar membaca) -- terpisah dari Laporan Hafalan
+   karena satuannya bukan halaman, tapi jumlah sesi & metode yang dipakai pembina. */
+function renderLaporanIdad(santri){
+  const rows = santri.map(s=>{
+    const items = DB.idad.filter(i=>i.santriId===s.id && i.tanggal>=lapFrom && i.tanggal<=lapTo).sort((a,b)=>b.tanggal.localeCompare(a.tanggal));
+    return { s, items };
+  });
+  document.getElementById('lapBody').innerHTML = `
+    <div class="card">
+      <div class="card-title">Riwayat belajar membaca santri I'dad (periode terpilih)</div>
+      ${rows.length===0 ? '<p class="muted">Belum ada santri di program I\'dad.</p>' : rows.map(r=>`
+        <div class="section-heading">${escapeHtml(r.s.nama)} &middot; ${r.items.length} sesi</div>
+        ${r.items.length===0 ? '<p class="muted">Belum ada catatan pada periode ini.</p>' : `
+          <div class="table-wrap"><table><tr><th>Tanggal</th><th>Metode</th><th>Catatan</th></tr>
+          ${r.items.map(i=>`<tr><td>${i.tanggal}</td><td>${escapeHtml(i.metode)||'-'}</td><td>${escapeHtml(i.catatan)||'-'}</td></tr>`).join('')}
+          </table></div>`}
+      `).join('')}
+    </div>
+  `;
+}
+/* Laporan Tes Kenaikan Juz -- daftar semua santri yang sedang menunggu tes (menunggu
+   dilewatkan pembina di tab Hafalan Aplikasi Pembina) supaya admin bisa memantau
+   santri mana yang mendekati/melewati batas waktu tes. */
+function renderLaporanTesJuz(santri){
+  const santriIds = new Set(santri.map(s=>s.id));
+  const menunggu = DB.tesKenaikanJuz.filter(t=>t.status==='menunggu' && santriIds.has(t.santriId))
+    .map(t=>({ t, s: DB.santri.find(x=>x.id===t.santriId), sisa: sisaHariTes(t) }))
+    .sort((a,b)=>a.sisa-b.sisa);
+  const riwayat = DB.tesKenaikanJuz.filter(t=>t.status==='lulus' && santriIds.has(t.santriId) && t.tanggalLulus>=lapFrom && t.tanggalLulus<=lapTo)
+    .map(t=>({ t, s: DB.santri.find(x=>x.id===t.santriId) }))
+    .sort((a,b)=>(b.t.tanggalLulus||'').localeCompare(a.t.tanggalLulus||''));
+  document.getElementById('lapBody').innerHTML = `
+    <div class="card">
+      <div class="card-title">Sedang menunggu Tes Kenaikan Juz</div>
+      ${menunggu.length===0 ? '<p class="muted">Tidak ada santri yang sedang menunggu tes kenaikan juz.</p>' : `
+        <div class="table-wrap"><table><tr><th>Santri</th><th>Program</th><th>Juz Selesai</th><th>Kategori</th><th>Wajib Baca</th><th>Mulai</th><th>Sisa Waktu</th></tr>
+        ${menunggu.map(r=>`<tr>
+          <td>${escapeHtml(r.s?r.s.nama:'-')}</td>
+          <td>${programLabel(r.s?r.s.program:'')}</td>
+          <td>${r.t.juzSelesai}</td>
+          <td>${r.t.kategori.toUpperCase()}</td>
+          <td>${r.t.syaratJuz} juz</td>
+          <td>${r.t.tanggalMulai}</td>
+          <td>${r.sisa<0?`<b style="color:var(--danger)">Lewat ${Math.abs(r.sisa)} hari</b>`:`${r.sisa} hari lagi`}</td>
+        </tr>`).join('')}
+        </table></div>`}
+    </div>
+    <div class="card">
+      <div class="card-title">Riwayat lulus tes kenaikan juz (periode terpilih)</div>
+      ${riwayat.length===0 ? '<p class="muted">Belum ada yang lulus pada periode ini.</p>' : `
+        <div class="table-wrap"><table><tr><th>Santri</th><th>Juz Selesai</th><th>Kategori</th><th>Tanggal Lulus</th></tr>
+        ${riwayat.map(r=>`<tr><td>${escapeHtml(r.s?r.s.nama:'-')}</td><td>${r.t.juzSelesai}</td><td>${r.t.kategori.toUpperCase()}</td><td>${r.t.tanggalLulus}</td></tr>`).join('')}
+        </table></div>`}
+    </div>
+  `;
 }
 function renderLaporanHafalan(santri){
   const rows = santri.map(s=>{
@@ -1197,7 +1369,7 @@ function hafalanExportRows(){
   return santri.map((s,i)=>{
     const items = DB.hafalan.filter(h=>h.santriId===s.id && h.tanggal>=lapFrom && h.tanggal<=lapTo);
     const tambah = items.reduce((sum,h)=>sum+(h.jumlahHalaman||1),0);
-    return { 'No': i+1, 'Nama': s.nama, 'No. Induk': s.noInduk, 'Program': s.program, 'Jumlah Sesi': items.length, 'Total Halaman Ditambah': tambah, 'Periode': `${lapFrom} s.d. ${lapTo}` };
+    return { 'No': i+1, 'Nama': s.nama, 'No. Induk': s.noInduk, 'Program': programLabel(s.program), 'Jumlah Sesi': items.length, 'Total Halaman Ditambah': tambah, 'Periode': `${lapFrom} s.d. ${lapTo}` };
   });
 }
 function exportHafalanExcel(){
@@ -2063,8 +2235,7 @@ function renderRaporPage(){
         </div>
         <select onchange="raporProgramFilter=this.value; renderRaporBody()">
           <option value="semua" ${raporProgramFilter==='semua'?'selected':''}>Semua Program</option>
-          <option value="Takhossus" ${raporProgramFilter==='Takhossus'?'selected':''}>Takhossus</option>
-          <option value="Non-Takhossus" ${raporProgramFilter==='Non-Takhossus'?'selected':''}>Non-Takhossus</option>
+          ${PROGRAM_LIST.map(p=>`<option value="${p}" ${raporProgramFilter===p?'selected':''}>${programLabel(p)}</option>`).join('')}
         </select>
         <button class="btn btn-sm btn-accent" title="Mengunduh rekap SEMUA santri, tidak terpengaruh pencarian/filter di atas" onclick="exportRaporExcel()">&#128190; Unduh Excel</button>
       </div>
@@ -2078,10 +2249,13 @@ function renderRaporBody(){
   const santri = filteredRaporSantri();
   const allCount = visibleSantriUntukLaporan().length;
   const rows = santri.map(s=>{
+    const isIdad = s.program === 'Idad';
     const total = totalHafalanSantri(s.id);
-    const nh = nilaiHafalanSantri(s.id, raporFrom, raporTo);
+    const nh = isIdad ? null : nilaiHafalanSantri(s.id, raporFrom, raporTo);
     const na = nilaiAbsensiSantri(s.id, raporFrom, raporTo);
-    return { s, total, nh, na };
+    const idadSesi = isIdad ? DB.idad.filter(i=>i.santriId===s.id && i.tanggal>=raporFrom && i.tanggal<=raporTo).length : 0;
+    const tesPending = isIdad ? null : tesJuzMenungguSantri(s.id);
+    return { s, isIdad, total, nh, na, idadSesi, tesPending };
   });
   const body = document.getElementById('raporBody');
   if(!body) return;
@@ -2093,9 +2267,9 @@ function renderRaporBody(){
         ${rows.length===0 ? `<tr><td colspan="7" class="muted" style="text-align:center;padding:14px">Tidak ada santri yang cocok dengan pencarian/filter.</td></tr>` : rows.map(r=>`
           <tr>
             <td>${escapeHtml(r.s.nama)}</td>
-            <td>Juz ${r.total.juz} hal. ${r.total.halaman}</td>
-            <td>${r.nh.tambahan} hal.</td>
-            <td><b>${r.nh.predikat}</b> &middot; ${predikatLabel(r.nh.predikat)}</td>
+            <td>${r.isIdad ? `<span class="muted">Program I'dad</span>` : `Juz ${r.total.juz} hal. ${r.total.halaman}${r.tesPending?` <span class="badge-testpending" title="${escapeHtml(labelKategoriTes(r.tesPending).replace(/&mdash;/g,'-'))}">&#9888; Menunggu tes kenaikan juz</span>`:''}`}</td>
+            <td>${r.isIdad ? `${r.idadSesi} sesi belajar membaca` : `${r.nh.tambahan} hal.`}</td>
+            <td>${r.isIdad ? `<span class="muted">Belum dinilai (belum hafalan)</span>` : `<b>${r.nh.predikat}</b> &middot; ${predikatLabel(r.nh.predikat)}`}</td>
             <td>${r.na.hadir}/${r.na.total} (${r.na.pct}%)</td>
             <td><b>${r.na.predikat}</b> &middot; ${predikatLabel(r.na.predikat)}</td>
             <td><button class="btn btn-sm" onclick="unduhRaporWord('${r.s.id}')">&#128196; Word</button></td>
@@ -2108,12 +2282,25 @@ function renderRaporBody(){
 function exportRaporExcel(){
   const santri = visibleSantriUntukLaporan();
   const rows = santri.map((s,i)=>{
+    const isIdad = s.program === 'Idad';
     const total = totalHafalanSantri(s.id);
-    const nh = nilaiHafalanSantri(s.id, raporFrom, raporTo);
     const na = nilaiAbsensiSantri(s.id, raporFrom, raporTo);
+    if(isIdad){
+      const idadSesi = DB.idad.filter(x=>x.santriId===s.id && x.tanggal>=raporFrom && x.tanggal<=raporTo).length;
+      return {
+        'No': i+1, 'Nama': s.nama, 'No. Induk': s.noInduk, 'Kelas': s.kelas, 'Kamar': s.kamar||'', 'Program': programLabel(s.program),
+        'Total Hafalan': '-', 'Tambah Hafalan (periode)': '-', 'Target (periode)': '-',
+        'Nilai Hafalan': '-', 'Predikat Hafalan': `Belum dinilai (${idadSesi} sesi belajar membaca)`,
+        'Kehadiran (periode)': `${na.hadir}/${na.total}`, 'Persen Hadir': na.pct + '%',
+        'Nilai Absensi': na.predikat, 'Predikat Absensi': predikatLabel(na.predikat),
+        'Periode': `${raporFrom} s.d. ${raporTo}`
+      };
+    }
+    const nh = nilaiHafalanSantri(s.id, raporFrom, raporTo);
+    const tesPending = tesJuzMenungguSantri(s.id);
     return {
-      'No': i+1, 'Nama': s.nama, 'No. Induk': s.noInduk, 'Kelas': s.kelas, 'Kamar': s.kamar||'', 'Program': s.program,
-      'Total Hafalan': `Juz ${total.juz} hal. ${total.halaman}`,
+      'No': i+1, 'Nama': s.nama, 'No. Induk': s.noInduk, 'Kelas': s.kelas, 'Kamar': s.kamar||'', 'Program': programLabel(s.program),
+      'Total Hafalan': `Juz ${total.juz} hal. ${total.halaman}` + (tesPending ? ' (menunggu tes kenaikan juz)' : ''),
       'Tambah Hafalan (periode)': nh.tambahan, 'Target (periode)': nh.target,
       'Nilai Hafalan': nh.predikat, 'Predikat Hafalan': predikatLabel(nh.predikat),
       'Kehadiran (periode)': `${na.hadir}/${na.total}`, 'Persen Hadir': na.pct + '%',
@@ -2174,10 +2361,32 @@ function unduhWordFile(html, filename){
 function unduhRaporWord(santriId){
   const s = DB.santri.find(x=>x.id===santriId);
   if(!s){ alert('Data santri tidak ditemukan.'); return; }
-  const total = totalHafalanSantri(s.id);
-  const nh = nilaiHafalanSantri(s.id, raporFrom, raporTo);
+  const isIdad = s.program === 'Idad';
   const na = nilaiAbsensiSantri(s.id, raporFrom, raporTo);
   const tglCetak = new Date().toLocaleDateString('id-ID', { day:'numeric', month:'long', year:'numeric' });
+  let barisHafalan;
+  if(isIdad){
+    const idadSesi = DB.idad.filter(x=>x.santriId===s.id && x.tanggal>=raporFrom && x.tanggal<=raporTo).length;
+    const idadTerakhirRow = DB.idad.filter(x=>x.santriId===s.id).sort((a,b)=>b.tanggal.localeCompare(a.tanggal))[0];
+    barisHafalan = `
+      <tr>
+        <td>Belajar Membaca (I'dad)</td>
+        <td>Santri masih dalam program I'dad (belum masuk hafalan). Tercatat ${idadSesi} sesi belajar membaca pada periode ini.${idadTerakhirRow ? `<br>Metode terakhir: ${escapeHtml(idadTerakhirRow.metode||'-')}` : ''}</td>
+        <td style="text-align:center">-</td>
+        <td>Belum dinilai</td>
+      </tr>`;
+  } else {
+    const total = totalHafalanSantri(s.id);
+    const nh = nilaiHafalanSantri(s.id, raporFrom, raporTo);
+    const tesPending = tesJuzMenungguSantri(s.id);
+    barisHafalan = `
+      <tr>
+        <td>Hafalan</td>
+        <td>Total hafalan saat ini: Juz ${total.juz} halaman ${total.halaman}.<br>Bertambah ${nh.tambahan} halaman selama periode (target ${nh.target} halaman).${tesPending ? `<br><i>Sedang menunggu Tes Kenaikan Juz (${labelKategoriTes(tesPending).replace(/&mdash;/g,'-')}), batas ${tesPending.batasHari} hari sejak ${tesPending.tanggalMulai}.</i>` : ''}</td>
+        <td style="text-align:center"><b>${nh.predikat}</b></td>
+        <td>${predikatLabel(nh.predikat)}</td>
+      </tr>`;
+  }
   const body = `
     <div class="doc-title">RAPOR SANTRI</div>
     <div class="doc-sub">Periode: ${raporFrom} s.d. ${raporTo}</div>
@@ -2186,16 +2395,11 @@ function unduhRaporWord(santriId){
       <tr><td class="lbl">No. Induk</td><td class="colon">:</td><td>${escapeHtml(s.noInduk)||'-'}</td></tr>
       <tr><td class="lbl">Kelas</td><td class="colon">:</td><td>${escapeHtml(s.kelas)||'-'}</td></tr>
       <tr><td class="lbl">Kamar</td><td class="colon">:</td><td>${escapeHtml(s.kamar)||'-'}</td></tr>
-      <tr><td class="lbl">Program</td><td class="colon">:</td><td>${escapeHtml(s.program)||'-'}</td></tr>
+      <tr><td class="lbl">Program</td><td class="colon">:</td><td>${escapeHtml(programLabel(s.program))||'-'}</td></tr>
     </table>
     <table class="grid">
       <tr><th style="width:18%">Kategori</th><th>Keterangan</th><th style="width:12%">Nilai</th><th style="width:20%">Predikat</th></tr>
-      <tr>
-        <td>Hafalan</td>
-        <td>Total hafalan saat ini: Juz ${total.juz} halaman ${total.halaman}.<br>Bertambah ${nh.tambahan} halaman selama periode (target ${nh.target} halaman).</td>
-        <td style="text-align:center"><b>${nh.predikat}</b></td>
-        <td>${predikatLabel(nh.predikat)}</td>
-      </tr>
+      ${barisHafalan}
       <tr>
         <td>Absensi Kegiatan</td>
         <td>Hadir ${na.hadir} dari ${na.total} kegiatan tercatat (${na.pct}%).</td>
@@ -2227,7 +2431,7 @@ function unduhDetailSantriWord(santriId){
       <tr><td class="lbl">Jenis kelamin</td><td class="colon">:</td><td>${s.jenisKelamin==='P'?'Perempuan':'Laki-laki'}</td></tr>
       <tr><td class="lbl">Kelas</td><td class="colon">:</td><td>${s.kelas==='Lulus'?'Lulus (masih aktif santri)':('Kelas '+(s.kelas||'-'))}</td></tr>
       <tr><td class="lbl">Kamar</td><td class="colon">:</td><td>${escapeHtml(s.kamar)||'-'}</td></tr>
-      <tr><td class="lbl">Program</td><td class="colon">:</td><td>${escapeHtml(s.program)||'-'}</td></tr>
+      <tr><td class="lbl">Program</td><td class="colon">:</td><td>${escapeHtml(programLabel(s.program))||'-'}</td></tr>
       <tr><td class="lbl">Tetala</td><td class="colon">:</td><td>${escapeHtml(s.tetala)||'-'}</td></tr>
       <tr><td class="lbl">Alamat</td><td class="colon">:</td><td>${escapeHtml(s.alamat)||'-'}</td></tr>
       <tr><td class="lbl">Tanggal masuk</td><td class="colon">:</td><td>${s.tglMasuk||'-'}</td></tr>
@@ -2310,16 +2514,18 @@ function renderKelolaPage(){
 function renderKelolaKegiatan(){
   document.getElementById('kelolaBody').innerHTML = `
     <div class="card">
-      ${DB.kegiatan.map(k=>`<div class="list-item"><div style="flex:1">${escapeHtml(k.nama)}${k.programKhusus?` <span class="muted">(khusus ${escapeHtml(k.programKhusus)})</span>`:''}</div><button class="btn btn-sm btn-danger" onclick="delKegiatan('${k.id}')">Hapus</button></div>`).join('')}
+      ${DB.kegiatan.map(k=>`<div class="list-item"><div style="flex:1">${escapeHtml(k.nama)}${k.programKhusus?` <span class="muted">(khusus ${escapeHtml(programLabel(k.programKhusus))})</span>`:''}</div><button class="btn btn-sm btn-danger" onclick="delKegiatan('${k.id}')">Hapus</button></div>`).join('')}
     </div>
     <div class="card">
       <label>Nama kegiatan baru</label>
       <input id="newKegiatan" placeholder="Contoh: Setoran 4">
+      <p class="muted" style="margin:0 0 4px">Untuk kegiatan belajar membaca santri I'dad, ketik nama persis <b>I'dad</b> dan pilih berlaku untuk I'DAD.</p>
       <label>Berlaku untuk</label>
       <select id="newKegiatanProgram">
         <option value="">SEMUA SANTRI</option>
         <option value="Takhossus">TAKHOSSUS</option>
         <option value="Non-Takhossus">NON TAKHOSSUS</option>
+        <option value="Idad">I'DAD</option>
       </select>
       <div class="btn-row"><button class="btn btn-accent" onclick="addKegiatan()">Tambah</button></div>
     </div>
