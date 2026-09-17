@@ -4,8 +4,8 @@
 /* ====== 1. KONFIGURASI SUPABASE ======
    Isi dua baris di bawah ini dengan Project URL dan Publishable Key
    dari Supabase (Settings -> API Keys). */
-const SUPABASE_URL = 'https://hvivddbhacoppkbtiqpe.supabase.co';
-const SUPABASE_KEY = 'sb_publishable_BTFxSTrt1vM1seoQaXG_7g_mqYo5aqq';
+const SUPABASE_URL = 'https://liivvueodribjwipmbrl.supabase.co';
+const SUPABASE_KEY = 'sb_publishable_KKSw-wparSwNbIvR9wHhyQ_Pc1NdcKG';
 
 const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
@@ -771,15 +771,65 @@ function setProgram(p){
   document.getElementById('prog_non').classList.toggle('on', p==='Non-Takhossus');
   document.getElementById('prog_idad').classList.toggle('on', p==='Idad');
 }
-function readImageTo(input, hiddenId){
+/* Melacak field foto mana yang sedang proses upload, supaya form tidak
+   disimpan duluan sebelum URL foto dari Storage selesai didapat. */
+const FOTO_UPLOADING = {};
+
+/* Kompres & resize gambar lewat <canvas> sebelum diupload -- maksimal
+   400x400px, kualitas JPEG ~70%. Ini memangkas ukuran file foto sampai
+   80-90% dibanding foto asli dari kamera HP, jadi jauh lebih hemat
+   kuota Storage & bandwidth (egress) saat foto ditarik lagi nantinya. */
+function kompresGambar(file, maxW = 400, maxH = 400, kualitas = 0.7){
+  return new Promise((resolve, reject)=>{
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error('Gagal membaca file foto'));
+    reader.onload = e=>{
+      const img = new Image();
+      img.onerror = () => reject(new Error('File yang dipilih bukan gambar yang valid'));
+      img.onload = ()=>{
+        let { width, height } = img;
+        if(width > maxW || height > maxH){
+          const rasio = Math.min(maxW / width, maxH / height);
+          width = Math.round(width * rasio);
+          height = Math.round(height * rasio);
+        }
+        const canvas = document.createElement('canvas');
+        canvas.width = width; canvas.height = height;
+        canvas.getContext('2d').drawImage(img, 0, 0, width, height);
+        canvas.toBlob(blob=>{
+          if(blob) resolve(blob); else reject(new Error('Gagal mengompres gambar'));
+        }, 'image/jpeg', kualitas);
+      };
+      img.src = e.target.result;
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
+/* Foto disimpan di Supabase Storage (bucket "foto"), kolom di database
+   cuma menyimpan URL publiknya -- bukan base64 mentah seperti sebelumnya.
+   URL Storage bisa di-cache browser, jadi foto yang sama tidak perlu
+   ditarik ulang tiap kali data dimuat. */
+async function readImageTo(input, hiddenId){
   const file = input.files[0]; if(!file) return;
-  const reader = new FileReader();
-  reader.onload = e=>{
-    document.getElementById(hiddenId).value = e.target.result;
-    const prev = document.getElementById(hiddenId+'Preview');
-    if(prev){ prev.src = e.target.result; prev.style.display='block'; }
-  };
-  reader.readAsDataURL(file);
+  const prev = document.getElementById(hiddenId + 'Preview');
+  FOTO_UPLOADING[hiddenId] = true;
+  try {
+    const blob = await kompresGambar(file);
+    // Preview langsung pakai foto hasil kompres, tidak perlu menunggu upload selesai.
+    if(prev){ prev.src = URL.createObjectURL(blob); prev.style.display = 'block'; }
+    const namaFile = `${hiddenId}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}.jpg`;
+    const { data, error } = await sb.storage.from('foto').upload(namaFile, blob, {
+      contentType: 'image/jpeg', upsert: false
+    });
+    if(error){ alert('Gagal mengunggah foto: ' + error.message); return; }
+    const { data: pub } = sb.storage.from('foto').getPublicUrl(data.path);
+    document.getElementById(hiddenId).value = pub.publicUrl;
+  } catch(e){
+    alert('Gagal memproses foto: ' + (e.message || e));
+  } finally {
+    FOTO_UPLOADING[hiddenId] = false;
+  }
 }
 async function saveSantri(id, isNew){
   const data = {
@@ -793,6 +843,9 @@ async function saveSantri(id, isNew){
   };
   if(!data.nama){ alert('Nama wajib diisi'); return; }
   if(OFFLINE_MODE){ alert('Sedang mode offline (tidak ada internet). Data tidak bisa disimpan sekarang.'); return; }
+  if(FOTO_UPLOADING['f_foto'] || FOTO_UPLOADING['f_fotoWali']){
+    alert('Foto masih diunggah, tunggu sebentar lalu tekan Simpan lagi.'); return;
+  }
   const row = santriAppToRow(data);
   if(isNew){
     /* Santri baru otomatis dibuatkan "kode wali" (6 digit acak) -- dipakai wali
@@ -802,7 +855,10 @@ async function saveSantri(id, isNew){
       const kodeWali = buatKodeLoginBaru();
       const { data: inserted, error } = await sb.from('santri').insert({ ...row, kode_wali: kodeWali }).select().single();
       if(!error){
-        await loadAll(); closeModal(); renderSantriPage();
+        /* Update state lokal saja (bukan loadAll penuh) -- santri baru langsung
+           ditambahkan ke DB.santri tanpa perlu menarik ulang semua tabel/foto. */
+        DB.santri.push(santriRowToApp(inserted));
+        closeModal(); renderSantriPage();
         /* otomatis tampilkan kartu santri (dan kartu wali kalau nama wali diisi) setelah data baru disimpan */
         openCardSantri(inserted.id);
         return;
@@ -814,9 +870,16 @@ async function saveSantri(id, isNew){
     }
     alert('Gagal membuat kode wali unik, coba tekan tombol Simpan sekali lagi.');
   } else {
-    const { error } = await sb.from('santri').update(row).eq('id', id);
+    const { data: updated, error } = await sb.from('santri').update(row).eq('id', id).select().single();
     if(error){ alert('Gagal menyimpan: ' + error.message); return; }
-    await loadAll(); closeModal(); renderSantriPage();
+    /* Update baris santri ini saja di state lokal, sambil pertahankan daftar
+       mahram yang sudah dimuat sebelumnya (tidak ikut dikembalikan oleh update ini). */
+    const idx = DB.santri.findIndex(x => x.id === id);
+    if(idx !== -1){
+      const mahramLama = DB.santri[idx].mahram;
+      DB.santri[idx] = { ...santriRowToApp(updated), mahram: mahramLama };
+    }
+    closeModal(); renderSantriPage();
   }
 }
 /* Buat kode wali acak 6 digit angka, dipakai untuk login Aplikasi Wali Santri. */
@@ -1134,13 +1197,19 @@ async function saveMahram(santriId){
   const nama = val('m_nama');
   if(!nama){ alert('Nama wajib diisi'); return; }
   if(OFFLINE_MODE){ alert('Sedang mode offline (tidak ada internet). Data tidak bisa disimpan sekarang.'); return; }
+  if(FOTO_UPLOADING['m_foto']){
+    alert('Foto masih diunggah, tunggu sebentar lalu tekan Simpan lagi.'); return;
+  }
   try {
     const hubungan = val('m_hubungan');
-    const { error } = await sb.from('mahram').insert({
+    const { data: inserted, error } = await sb.from('mahram').insert({
       santri_id: santriId, nama, hubungan: hubungan || null, no_hp: val('m_hp') || null, foto_url: val('m_foto') || null
-    });
+    }).select().single();
     if(error){ alert('Gagal menyimpan: ' + error.message); return; }
-    await loadAll();
+    /* Update state lokal saja -- tambahkan mahram baru ke santri terkait
+       tanpa menarik ulang semua tabel (loadAll). */
+    const s = DB.santri.find(x => x.id === santriId);
+    if(s) s.mahram.push(mahramRowToApp(inserted));
     closeModal();
     openSantriDetail(santriId);
   } catch(e){
