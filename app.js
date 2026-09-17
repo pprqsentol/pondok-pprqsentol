@@ -283,16 +283,16 @@ let SESSION = null; // { userId, role, program, santriId, nama }
 async function loadAll() {
   try {
     const [kegiatanRes, santriRes, mahramRes, absensiRes, hafalanRes, murojaahRes, idadRes, tesJuzRes, saldoRes, pembinaRes] = await Promise.all([
-      sb.from('kegiatan').select('*').eq('aktif', true).order('nama'),
-      sb.from('santri').select('*').eq('aktif', true).order('nama'),
-      sb.from('mahram').select('*'),
-      sb.from('absensi').select('*'),
-      sb.from('hafalan').select('*'),
-      sb.from('murojaah').select('*'),
-      sb.from('idad').select('*'),
-      sb.from('tes_kenaikan_juz').select('*'),
-      sb.from('transaksi_saldo').select('*'),
-      sb.from('pembina').select('*').order('nama')
+      sb.from('kegiatan').select('id, nama, program_khusus').eq('aktif', true).order('nama'),
+      sb.from('santri').select('id, nama, no_induk, foto_url, tetala, alamat, tanggal_masuk, jenis_kelamin, nama_ayah, nama_ibu, nama_wali, foto_wali, kode_wali, kelas, kamar, no_hp_wali, program, hafalan_awal, sembunyikan_dari_pembina, bebas_tagihan_iuran').eq('aktif', true).order('nama'),
+      sb.from('mahram').select('id, santri_id, nama, hubungan, no_hp, foto_url'),
+      sb.from('absensi').select('id, santri_id, kegiatan_id, tanggal, status'),
+      sb.from('hafalan').select('id, santri_id, tanggal, juz, halaman_dari, halaman_sampai, kegiatan_id'),
+      sb.from('murojaah').select('id, santri_id, kegiatan_id, tanggal, juz, cakupan'),
+      sb.from('idad').select('id, santri_id, kegiatan_id, tanggal, metode, catatan'),
+      sb.from('tes_kenaikan_juz').select('id, santri_id, juz_selesai, kategori, syarat_juz, tanggal_mulai, batas_hari, status, tanggal_lulus'),
+      sb.from('transaksi_saldo').select('id, santri_id, jenis, jumlah, keterangan, tanggal, status, metode'),
+      sb.from('pembina').select('id, nama, program, tetala, alamat, aktif').order('nama')
     ]);
     if(kegiatanRes.error) throw kegiatanRes.error;
     const santri = (santriRes.data || []).map(santriRowToApp);
@@ -390,7 +390,7 @@ async function initLogin() {
 /* Login di aplikasi ini khusus untuk role admin_pusat.
    Login ustadz/pembina sudah dipindah ke Aplikasi Pembina yang terpisah. */
 async function loadSessionFromAuth(userId) {
-  const { data: profil, error } = await sb.from('profil_akun').select('*').eq('id', userId).single();
+  const { data: profil, error } = await sb.from('profil_akun').select('nama, role, program, santri_id').eq('id', userId).single();
   if (error || !profil) return 'not_found';
   if (profil.role !== 'admin_pusat') return 'wrong_role';
   SESSION = { userId, role: profil.role, program: profil.program, santriId: profil.santri_id, nama: profil.nama };
@@ -806,7 +806,7 @@ function kompresGambar(file, maxW = 400, maxH = 400, kualitas = 0.7){
   });
 }
 
-/* Foto disimpan di Supabase Storage (bucket "foto"), kolom di database
+/* Foto disimpan di Supabase Storage (bucket "foto-santri"), kolom di database
    cuma menyimpan URL publiknya -- bukan base64 mentah seperti sebelumnya.
    URL Storage bisa di-cache browser, jadi foto yang sama tidak perlu
    ditarik ulang tiap kali data dimuat. */
@@ -819,11 +819,11 @@ async function readImageTo(input, hiddenId){
     // Preview langsung pakai foto hasil kompres, tidak perlu menunggu upload selesai.
     if(prev){ prev.src = URL.createObjectURL(blob); prev.style.display = 'block'; }
     const namaFile = `${hiddenId}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}.jpg`;
-    const { data, error } = await sb.storage.from('foto').upload(namaFile, blob, {
+    const { data, error } = await sb.storage.from('foto-santri').upload(namaFile, blob, {
       contentType: 'image/jpeg', upsert: false
     });
     if(error){ alert('Gagal mengunggah foto: ' + error.message); return; }
-    const { data: pub } = sb.storage.from('foto').getPublicUrl(data.path);
+    const { data: pub } = sb.storage.from('foto-santri').getPublicUrl(data.path);
     document.getElementById(hiddenId).value = pub.publicUrl;
   } catch(e){
     alert('Gagal memproses foto: ' + (e.message || e));
@@ -853,7 +853,7 @@ async function saveSantri(id, isNew){
        kode acak, ulangi kalau kebetulan bentrok dengan kode yang sudah ada. */
     for(let i=0;i<5;i++){
       const kodeWali = buatKodeLoginBaru();
-      const { data: inserted, error } = await sb.from('santri').insert({ ...row, kode_wali: kodeWali }).select().single();
+      const { data: inserted, error } = await sb.from('santri').insert({ ...row, kode_wali: kodeWali }).select('id, nama, no_induk, foto_url, tetala, alamat, tanggal_masuk, jenis_kelamin, nama_ayah, nama_ibu, nama_wali, foto_wali, kode_wali, kelas, kamar, no_hp_wali, program, hafalan_awal, sembunyikan_dari_pembina, bebas_tagihan_iuran').single();
       if(!error){
         /* Update state lokal saja (bukan loadAll penuh) -- santri baru langsung
            ditambahkan ke DB.santri tanpa perlu menarik ulang semua tabel/foto. */
@@ -870,7 +870,7 @@ async function saveSantri(id, isNew){
     }
     alert('Gagal membuat kode wali unik, coba tekan tombol Simpan sekali lagi.');
   } else {
-    const { data: updated, error } = await sb.from('santri').update(row).eq('id', id).select().single();
+    const { data: updated, error } = await sb.from('santri').update(row).eq('id', id).select('id, nama, no_induk, foto_url, tetala, alamat, tanggal_masuk, jenis_kelamin, nama_ayah, nama_ibu, nama_wali, foto_wali, kode_wali, kelas, kamar, no_hp_wali, program, hafalan_awal, sembunyikan_dari_pembina, bebas_tagihan_iuran').single();
     if(error){ alert('Gagal menyimpan: ' + error.message); return; }
     /* Update baris santri ini saja di state lokal, sambil pertahankan daftar
        mahram yang sudah dimuat sebelumnya (tidak ikut dikembalikan oleh update ini). */
@@ -1204,7 +1204,7 @@ async function saveMahram(santriId){
     const hubungan = val('m_hubungan');
     const { data: inserted, error } = await sb.from('mahram').insert({
       santri_id: santriId, nama, hubungan: hubungan || null, no_hp: val('m_hp') || null, foto_url: val('m_foto') || null
-    }).select().single();
+    }).select('id, nama, hubungan, no_hp, foto_url').single();
     if(error){ alert('Gagal menyimpan: ' + error.message); return; }
     /* Update state lokal saja -- tambahkan mahram baru ke santri terkait
        tanpa menarik ulang semua tabel (loadAll). */
@@ -1666,15 +1666,14 @@ function formatRupiah(n){
 async function loadKasData(){
   try {
     const [kasAwalRes, mutasiRes, produkRes, transaksiRes] = await Promise.all([
-      sb.from('pengaturan_kas').select('*'),
-      sb.from('kas_mutasi').select('*'),
+      sb.from('pengaturan_kas').select('lokasi, kas_awal'),
+      sb.from('kas_mutasi').select('arah, jumlah, tanggal, kategori'),
       // harga_jual TIDAK diambil lagi -- Pondok hanya perlu harga_beli untuk menilai stok gudang
       // (Nilai Stok). Laba tidak lagi dihitung dari harga produk, lihat labaKotorTransaksi().
       sb.from('produk').select('id,stok,harga_beli'),
-      // Pakai select('*') (bukan sebut nama kolom satu-satu) — sama seperti cara Aplikasi Kasir Toko
-      // membaca tabel ini — supaya query tidak gagal total kalau ada kolom yang namanya sedikit beda
-      // dari dugaan (field yang tidak dipakai di sini cukup diabaikan, bukan bikin error).
-      sb.from('transaksi_toko').select('*')
+      // Cuma kolom yang dipakai hitungKas()/hitungLaba() (dibatalkan, metode, status_bayar,
+      // total, modal_total, created_at) -- sama seperti Aplikasi Kasir Toko cuma baca yang perlu.
+      sb.from('transaksi_toko').select('dibatalkan, metode, status_bayar, total, modal_total, created_at')
     ]);
     if(kasAwalRes.error) throw kasAwalRes.error;
     if(mutasiRes.error) throw mutasiRes.error;
@@ -1957,10 +1956,10 @@ const NAMA_BULAN = ['Januari','Februari','Maret','April','Mei','Juni','Juli','Ag
 async function loadTagihanData(){
   try {
     const [tagihanRes, jenisRes, iuranRes, iuranDetailRes, saldoSantriRes] = await Promise.all([
-      sb.from('tagihan').select('*'),
-      sb.from('jenis_tagihan').select('*'),
-      sb.from('iuran').select('*'),
-      sb.from('iuran_detail').select('*'),
+      sb.from('tagihan').select('jenis_tagihan_id, bulan, status, santri_id, jumlah, jatuh_tempo'),
+      sb.from('jenis_tagihan').select('id, nama'),
+      sb.from('iuran').select('id, keterangan, tanggal'),
+      sb.from('iuran_detail').select('id, iuran_id, santri_id, jumlah, status'),
       sb.from('saldo_santri').select('santri_id,saldo') // sumber tunggal saldo -- sama persis yang dipakai Aplikasi Toko, bukan dihitung ulang manual di sini
     ]);
     if(tagihanRes.error) throw tagihanRes.error;

@@ -1,4 +1,4 @@
-const CACHE = 'pondok-rq-v24-sembunyikan-laporan';
+const CACHE = 'pondok-rq-v25-select-kolom';
 const FILES = [
   './',
   './index.html',
