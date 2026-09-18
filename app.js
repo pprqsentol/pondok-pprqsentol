@@ -54,8 +54,19 @@ const STATUS_FROM_DB = { Hadir: 'h', Alpha: 'a', Izin: 'i', Sakit: 'a' };
 /* Daftar kolom santri yang dipakai berulang di beberapa query (load awal, insert, update)
    -- disatukan di sini supaya kolom foto_thumb_url/foto_wali_thumb_url tidak ketinggalan
    kalau suatu saat ditambah kolom lain lagi. */
-const SANTRI_SELECT_COLS = 'id, nama, no_induk, foto_url, foto_thumb_url, tetala, alamat, tanggal_masuk, jenis_kelamin, nama_ayah, nama_ibu, nama_wali, foto_wali, foto_wali_thumb_url, kode_wali, kelas, kamar, no_hp_wali, program, hafalan_awal, sembunyikan_dari_pembina, bebas_tagihan_iuran';
-const MAHRAM_SELECT_COLS = 'id, santri_id, nama, hubungan, no_hp, foto_url, foto_thumb_url';
+const SANTRI_SELECT_COLS = 'id, nama, no_induk, foto_url, foto_thumb_url, tetala, alamat, tanggal_masuk, jenis_kelamin, nama_ayah, nama_ibu, nama_wali, foto_wali, foto_wali_thumb_url, kode_wali, kelas, kamar, no_hp_wali, program, hafalan_awal, sembunyikan_dari_pembina, bebas_tagihan_iuran, aktif, updated_at';
+const MAHRAM_SELECT_COLS = 'id, santri_id, nama, hubungan, no_hp, foto_url, foto_thumb_url, updated_at';
+
+/* Kolom select untuk tabel riwayat/lain -- sertakan updated_at di semua supaya
+   bisa dipakai delta sync (lihat bagian 3c). */
+const KEGIATAN_SELECT_COLS = 'id, nama, program_khusus, aktif, updated_at';
+const ABSENSI_SELECT_COLS = 'id, santri_id, kegiatan_id, tanggal, status, updated_at';
+const HAFALAN_SELECT_COLS = 'id, santri_id, tanggal, juz, halaman_dari, halaman_sampai, kegiatan_id, updated_at';
+const MUROJAAH_SELECT_COLS = 'id, santri_id, kegiatan_id, tanggal, juz, cakupan, updated_at';
+const IDAD_SELECT_COLS = 'id, santri_id, kegiatan_id, tanggal, metode, catatan, updated_at';
+const TES_JUZ_SELECT_COLS = 'id, santri_id, juz_selesai, kategori, syarat_juz, tanggal_mulai, batas_hari, status, tanggal_lulus, updated_at';
+const TRANSAKSI_SALDO_SELECT_COLS = 'id, santri_id, jenis, jumlah, keterangan, tanggal, status, metode, updated_at';
+const PEMBINA_SELECT_COLS = 'id, nama, program, tetala, alamat, aktif, updated_at';
 
 function santriRowToApp(r) {
   return {
@@ -241,6 +252,57 @@ function tesJuzMenungguSantri(santriId){
 function mahramRowToApp(r) {
   return { id: r.id, nama: r.nama, hubungan: r.hubungan || '', hp: r.no_hp || '', foto: r.foto_url || '', fotoThumb: r.foto_thumb_url || '' };
 }
+function kegiatanRowToApp(k) {
+  return { id: k.id, nama: k.nama, programKhusus: k.program_khusus || null };
+}
+function absensiRowToApp(a) {
+  return {
+    id: a.id, santriId: a.santri_id, kegiatanId: a.kegiatan_id, tanggal: a.tanggal,
+    status: STATUS_FROM_DB[a.status] || 'a'
+  };
+}
+function hafalanRowToApp(h) {
+  return {
+    id: h.id, santriId: h.santri_id, tanggal: h.tanggal, juz: h.juz,
+    halamanDari: h.halaman_dari, halamanSampai: h.halaman_sampai,
+    jumlahHalaman: h.halaman_sampai - h.halaman_dari + 1,
+    kegiatanId: h.kegiatan_id || null
+  };
+}
+function murojaahRowToApp(m) {
+  return { id: m.id, santriId: m.santri_id, kegiatanId: m.kegiatan_id, tanggal: m.tanggal, juz: m.juz, cakupan: m.cakupan };
+}
+function idadRowToApp(i) {
+  return { id: i.id, santriId: i.santri_id, kegiatanId: i.kegiatan_id || null, tanggal: i.tanggal, metode: i.metode || '', catatan: i.catatan || '' };
+}
+function tesJuzRowToApp(t) {
+  return {
+    id: t.id, santriId: t.santri_id, juzSelesai: t.juz_selesai, kategori: t.kategori,
+    syaratJuz: t.syarat_juz, tanggalMulai: t.tanggal_mulai, batasHari: t.batas_hari,
+    status: t.status, tanggalLulus: t.tanggal_lulus || null,
+    dicatatOleh: t.dicatat_oleh || '', catatan: t.catatan || ''
+  };
+}
+function transaksiSaldoRowToApp(t) {
+  return {
+    id: t.id, santriId: t.santri_id, jenis: t.jenis, nominal: t.jumlah,
+    keterangan: t.keterangan || '', tanggal: t.tanggal, status: t.status || 'aktif',
+    metode: t.metode || null
+  };
+}
+function pembinaRowToApp(p) {
+  return { id: p.id, nama: p.nama, program: p.program, tetala: p.tetala || '', alamat: p.alamat || '', aktif: p.aktif };
+}
+
+/* Ganti/tambah item ke sebuah array DB berdasarkan id (dipakai delta sync). */
+function upsertById(arr, item) {
+  const i = arr.findIndex(x => x.id === item.id);
+  if (i === -1) arr.push(item); else arr[i] = item;
+}
+function removeById(arr, id) {
+  const i = arr.findIndex(x => x.id === id);
+  if (i !== -1) arr.splice(i, 1);
+}
 
 /* ====== 3b. INDEXEDDB (cadangan offline, bukan server utama) ======
    Supabase tetap sumber data utama. Setiap kali data berhasil diambil
@@ -281,80 +343,167 @@ async function idbLoad(){
     });
   } catch(e){ console.warn('Gagal baca cadangan offline:', e); return null; }
 }
+/* Metadata delta sync: { lastFullSync: ISOString, tables: { <nama tabel>: ISOString } }
+   Disimpan terpisah dari snapshot supaya bisa dibaca/ditulis tanpa menyalin seluruh DB. */
+async function idbGetMeta(){
+  try {
+    const db = await idbOpen();
+    return await new Promise((resolve, reject)=>{
+      const tx = db.transaction(IDB_STORE, 'readonly');
+      const req = tx.objectStore(IDB_STORE).get('syncMeta');
+      req.onsuccess = ()=> resolve(req.result || null);
+      req.onerror = ()=> reject(req.error);
+    });
+  } catch(e){ console.warn('Gagal baca metadata sync:', e); return null; }
+}
+async function idbSetMeta(meta){
+  try {
+    const db = await idbOpen();
+    await new Promise((resolve, reject)=>{
+      const tx = db.transaction(IDB_STORE, 'readwrite');
+      tx.objectStore(IDB_STORE).put(meta, 'syncMeta');
+      tx.oncomplete = resolve;
+      tx.onerror = ()=> reject(tx.error);
+    });
+  } catch(e){ console.warn('Gagal simpan metadata sync:', e); }
+}
 
 /* ====== 3. STATE APLIKASI (diisi dari Supabase setelah login) ====== */
 let DB = { kegiatan: [], santri: [], absensi: [], hafalan: [], murojaah: [], idad: [], tesKenaikanJuz: [], transaksiSaldo: [], pembina: [] };
 let SESSION = null; // { userId, role, program, santriId, nama }
 
-async function loadAll() {
+/* Tabel riwayat yang disinkron lewat delta sync (updated_at > checkpoint terakhir).
+   Tidak termasuk kegiatan/santri/mahram/pembina -- itu ditangani terpisah karena
+   perlu logika tambahan (aktif/nonaktif, nested di dalam santri). */
+const DELTA_TABLES = [
+  { key: 'absensi', table: 'absensi', cols: ABSENSI_SELECT_COLS, map: absensiRowToApp },
+  { key: 'hafalan', table: 'hafalan', cols: HAFALAN_SELECT_COLS, map: hafalanRowToApp },
+  { key: 'murojaah', table: 'murojaah', cols: MUROJAAH_SELECT_COLS, map: murojaahRowToApp },
+  { key: 'idad', table: 'idad', cols: IDAD_SELECT_COLS, map: idadRowToApp },
+  { key: 'tesKenaikanJuz', table: 'tes_kenaikan_juz', cols: TES_JUZ_SELECT_COLS, map: tesJuzRowToApp },
+  { key: 'transaksiSaldo', table: 'transaksi_saldo', cols: TRANSAKSI_SALDO_SELECT_COLS, map: transaksiSaldoRowToApp }
+];
+// Data dianggap kedaluwarsa sepenuhnya (perlu full reload, bukan delta) kalau sudah
+// lebih dari sekian lama sejak full reload terakhir -- ini jaring pengaman supaya
+// penghapusan data di server (santri/kegiatan/pembina/mahram dihapus permanen) tetap
+// akhirnya kebawa ke cache lokal walau delta sync sendiri tidak bisa mendeteksi delete.
+const FULL_RELOAD_INTERVAL_MS = 24 * 60 * 60 * 1000; // 24 jam
+
+async function loadAll(opsi) {
+  opsi = opsi || {};
+  const cadangan = opsi.paksaFull ? null : await idbLoad();
+  const meta = cadangan ? await idbGetMeta() : null;
+  const cacheKedaluwarsa = !meta || !meta.lastFullSync ||
+    (Date.now() - new Date(meta.lastFullSync).getTime() > FULL_RELOAD_INTERVAL_MS);
+
+  if (cadangan) DB = cadangan; // tampilkan cache dulu (instan), lalu disegarkan di bawah
+
   try {
-    const [kegiatanRes, santriRes, mahramRes, absensiRes, hafalanRes, murojaahRes, idadRes, tesJuzRes, saldoRes, pembinaRes] = await Promise.all([
-      sb.from('kegiatan').select('id, nama, program_khusus').eq('aktif', true).order('nama'),
-      sb.from('santri').select(SANTRI_SELECT_COLS).eq('aktif', true).order('nama'),
-      sb.from('mahram').select(MAHRAM_SELECT_COLS),
-      sb.from('absensi').select('id, santri_id, kegiatan_id, tanggal, status'),
-      sb.from('hafalan').select('id, santri_id, tanggal, juz, halaman_dari, halaman_sampai, kegiatan_id'),
-      sb.from('murojaah').select('id, santri_id, kegiatan_id, tanggal, juz, cakupan'),
-      sb.from('idad').select('id, santri_id, kegiatan_id, tanggal, metode, catatan'),
-      sb.from('tes_kenaikan_juz').select('id, santri_id, juz_selesai, kategori, syarat_juz, tanggal_mulai, batas_hari, status, tanggal_lulus'),
-      sb.from('transaksi_saldo').select('id, santri_id, jenis, jumlah, keterangan, tanggal, status, metode'),
-      sb.from('pembina').select('id, nama, program, tetala, alamat, aktif').order('nama')
-    ]);
-    if(kegiatanRes.error) throw kegiatanRes.error;
-    const santri = (santriRes.data || []).map(santriRowToApp);
-    (mahramRes.data || []).forEach(m => {
-      const s = santri.find(x => x.id === m.santri_id);
-      if (s) s.mahram.push(mahramRowToApp(m));
-    });
-    DB = {
-      kegiatan: (kegiatanRes.data || []).map(k => ({ id: k.id, nama: k.nama, programKhusus: k.program_khusus || null })),
-      santri,
-      absensi: (absensiRes.data || []).map(a => ({
-        id: a.id, santriId: a.santri_id, kegiatanId: a.kegiatan_id, tanggal: a.tanggal,
-        status: STATUS_FROM_DB[a.status] || 'a'
-      })),
-      hafalan: (hafalanRes.data || []).map(h => ({
-        id: h.id, santriId: h.santri_id, tanggal: h.tanggal, juz: h.juz,
-        halamanDari: h.halaman_dari, halamanSampai: h.halaman_sampai,
-        jumlahHalaman: h.halaman_sampai - h.halaman_dari + 1,
-        kegiatanId: h.kegiatan_id || null
-      })),
-      murojaah: (murojaahRes && !murojaahRes.error) ? (murojaahRes.data || []).map(m => ({
-        id: m.id, santriId: m.santri_id, kegiatanId: m.kegiatan_id, tanggal: m.tanggal,
-        juz: m.juz, cakupan: m.cakupan
-      })) : [],
-      idad: (idadRes && !idadRes.error) ? (idadRes.data || []).map(i => ({
-        id: i.id, santriId: i.santri_id, kegiatanId: i.kegiatan_id || null, tanggal: i.tanggal,
-        metode: i.metode || '', catatan: i.catatan || ''
-      })) : [],
-      tesKenaikanJuz: (tesJuzRes && !tesJuzRes.error) ? (tesJuzRes.data || []).map(t => ({
-        id: t.id, santriId: t.santri_id, juzSelesai: t.juz_selesai, kategori: t.kategori,
-        syaratJuz: t.syarat_juz, tanggalMulai: t.tanggal_mulai, batasHari: t.batas_hari,
-        status: t.status, tanggalLulus: t.tanggal_lulus || null,
-        dicatatOleh: t.dicatat_oleh || '', catatan: t.catatan || ''
-      })) : [],
-      transaksiSaldo: (saldoRes.data || []).map(t => ({
-        id: t.id, santriId: t.santri_id, jenis: t.jenis, nominal: t.jumlah,
-        keterangan: t.keterangan || '', tanggal: t.tanggal, status: t.status || 'aktif',
-        metode: t.metode || null
-      })),
-      pembina: (pembinaRes.data || []).map(p => ({
-        id: p.id, nama: p.nama, program: p.program, tetala: p.tetala || '', alamat: p.alamat || '',
-        aktif: p.aktif
-      }))
-    };
+    if (!cadangan || cacheKedaluwarsa) {
+      await fullReload();
+    } else {
+      await deltaSync(meta);
+    }
     OFFLINE_MODE = false;
-    idbSave(DB);
   } catch(e){
-    console.warn('Gagal ambil data dari Supabase, coba pakai cadangan offline:', e);
-    const cadangan = await idbLoad();
-    if(cadangan){
-      DB = cadangan;
-      OFFLINE_MODE = true;
+    console.warn('Gagal ambil data dari Supabase:', e);
+    if (cadangan) {
+      OFFLINE_MODE = true; // tetap tampilkan cache lama, mode lihat saja
     } else {
       throw e;
     }
   }
+}
+
+/* Ambil SEMUA data (dipakai saat cache kosong, atau tiap 24 jam sekali sebagai
+   penyelaras penuh). Sama seperti loadAll() versi lama, hanya dipecah jadi fungsi
+   sendiri supaya bisa dipanggil terpisah dari delta sync. */
+async function fullReload() {
+  const mulai = new Date().toISOString(); // checkpoint delta sync berikutnya dimulai dari sini
+  const [kegiatanRes, santriRes, mahramRes, absensiRes, hafalanRes, murojaahRes, idadRes, tesJuzRes, saldoRes, pembinaRes] = await Promise.all([
+    sb.from('kegiatan').select(KEGIATAN_SELECT_COLS).eq('aktif', true).order('nama'),
+    sb.from('santri').select(SANTRI_SELECT_COLS).eq('aktif', true).order('nama'),
+    sb.from('mahram').select(MAHRAM_SELECT_COLS),
+    sb.from('absensi').select(ABSENSI_SELECT_COLS),
+    sb.from('hafalan').select(HAFALAN_SELECT_COLS),
+    sb.from('murojaah').select(MUROJAAH_SELECT_COLS),
+    sb.from('idad').select(IDAD_SELECT_COLS),
+    sb.from('tes_kenaikan_juz').select(TES_JUZ_SELECT_COLS),
+    sb.from('transaksi_saldo').select(TRANSAKSI_SALDO_SELECT_COLS),
+    sb.from('pembina').select(PEMBINA_SELECT_COLS).order('nama')
+  ]);
+  if(kegiatanRes.error) throw kegiatanRes.error;
+  const santri = (santriRes.data || []).map(santriRowToApp);
+  (mahramRes.data || []).forEach(m => {
+    const s = santri.find(x => x.id === m.santri_id);
+    if (s) s.mahram.push(mahramRowToApp(m));
+  });
+  DB = {
+    kegiatan: (kegiatanRes.data || []).map(kegiatanRowToApp),
+    santri,
+    absensi: (absensiRes.data || []).map(absensiRowToApp),
+    hafalan: (hafalanRes.data || []).map(hafalanRowToApp),
+    murojaah: (murojaahRes && !murojaahRes.error) ? (murojaahRes.data || []).map(murojaahRowToApp) : [],
+    idad: (idadRes && !idadRes.error) ? (idadRes.data || []).map(idadRowToApp) : [],
+    tesKenaikanJuz: (tesJuzRes && !tesJuzRes.error) ? (tesJuzRes.data || []).map(tesJuzRowToApp) : [],
+    transaksiSaldo: (saldoRes.data || []).map(transaksiSaldoRowToApp),
+    pembina: (pembinaRes.data || []).map(pembinaRowToApp)
+  };
+  idbSave(DB);
+  const tables = {};
+  DELTA_TABLES.forEach(t => { tables[t.key] = mulai; });
+  await idbSetMeta({ lastFullSync: mulai, kegiatan: mulai, santri: mulai, mahram: mulai, pembina: mulai, tables });
+}
+
+/* Ambil HANYA baris yang berubah sejak checkpoint terakhir (updated_at > checkpoint),
+   lalu gabungkan ke DB yang sudah ada di memori/cache -- jauh lebih hemat egress
+   dibanding tarik ulang seluruh tabel riwayat tiap buka app. */
+async function deltaSync(meta) {
+  const mulai = new Date().toISOString();
+  const tugas = [
+    sb.from('kegiatan').select(KEGIATAN_SELECT_COLS).gt('updated_at', meta.kegiatan || meta.lastFullSync),
+    sb.from('santri').select(SANTRI_SELECT_COLS).gt('updated_at', meta.santri || meta.lastFullSync),
+    sb.from('mahram').select(MAHRAM_SELECT_COLS).gt('updated_at', meta.mahram || meta.lastFullSync),
+    sb.from('pembina').select(PEMBINA_SELECT_COLS).gt('updated_at', meta.pembina || meta.lastFullSync),
+    ...DELTA_TABLES.map(t => sb.from(t.table).select(t.cols).gt('updated_at', (meta.tables && meta.tables[t.key]) || meta.lastFullSync))
+  ];
+  const hasil = await Promise.all(tugas);
+  const [kegiatanRes, santriRes, mahramRes, pembinaRes, ...deltaRes] = hasil;
+  hasil.forEach(r => { if (r.error) throw r.error; });
+
+  // kegiatan: kalau jadi nonaktif, hapus dari cache (dulu difilter aktif=true saat full load)
+  (kegiatanRes.data || []).forEach(k => {
+    if (k.aktif === false) removeById(DB.kegiatan, k.id);
+    else upsertById(DB.kegiatan, kegiatanRowToApp(k));
+  });
+  // santri: sama, kalau dinonaktifkan hapus dari cache
+  (santriRes.data || []).forEach(r => {
+    if (r.aktif === false) { removeById(DB.santri, r.id); return; }
+    const existing = DB.santri.find(x => x.id === r.id);
+    const s = santriRowToApp(r);
+    s.mahram = existing ? existing.mahram : []; // mahram digabung terpisah di bawah
+    upsertById(DB.santri, s);
+  });
+  // mahram: nested di dalam santri masing-masing
+  (mahramRes.data || []).forEach(m => {
+    const s = DB.santri.find(x => x.id === m.santri_id);
+    if (s) upsertById(s.mahram, mahramRowToApp(m));
+  });
+  // pembina
+  (pembinaRes.data || []).forEach(p => upsertById(DB.pembina, pembinaRowToApp(p)));
+  // tabel riwayat (absensi, hafalan, murojaah, idad, tesKenaikanJuz, transaksiSaldo)
+  DELTA_TABLES.forEach((t, i) => {
+    (deltaRes[i].data || []).forEach(row => upsertById(DB[t.key], t.map(row)));
+  });
+
+  idbSave(DB);
+  const tables = Object.assign({}, meta.tables);
+  DELTA_TABLES.forEach(t => { tables[t.key] = mulai; });
+  await idbSetMeta({
+    lastFullSync: meta.lastFullSync,
+    kegiatan: mulai, santri: mulai, mahram: mulai, pembina: mulai,
+    tables
+  });
 }
 
 const NAV_ADMIN = [
