@@ -722,7 +722,7 @@ function openSantriForm(existing){
   showModal('Data Santri', `
     <label>Foto profil</label>
     <input type="file" accept="image/*" onchange="readImageTo(this,'f_foto')">
-    <img id="f_fotoPreview" src="${s.foto||''}" style="width:70px;height:70px;border-radius:50%;object-fit:cover;margin-top:6px;${s.foto?'':'display:none'}">
+    <img id="f_fotoPreview" src="${s.fotoThumb||s.foto||''}" style="width:70px;height:70px;border-radius:50%;object-fit:cover;margin-top:6px;${s.foto?'':'display:none'}">
     <input type="hidden" id="f_foto" value="${s.foto||''}">
     <input type="hidden" id="f_fotoThumb" value="${s.fotoThumb||''}">
     <label>Nama lengkap</label><input id="f_nama" value="${escapeHtml(s.nama)}">
@@ -747,7 +747,7 @@ function openSantriForm(existing){
     <label>Nama wali</label><input id="f_namaWali" value="${escapeHtml(s.namaWali)||''}">
     <label>Foto wali (opsional)</label>
     <input type="file" accept="image/*" onchange="readImageTo(this,'f_fotoWali')">
-    <img id="f_fotoWaliPreview" src="${s.fotoWali||''}" style="width:60px;height:60px;border-radius:50%;object-fit:cover;margin-top:6px;${s.fotoWali?'':'display:none'}">
+    <img id="f_fotoWaliPreview" src="${s.fotoWaliThumb||s.fotoWali||''}" style="width:60px;height:60px;border-radius:50%;object-fit:cover;margin-top:6px;${s.fotoWali?'':'display:none'}">
     <input type="hidden" id="f_fotoWali" value="${s.fotoWali||''}">
     <input type="hidden" id="f_fotoWaliThumb" value="${s.fotoWaliThumb||''}">
     <label>No. HP wali</label><input id="f_hpWali" type="tel" inputmode="numeric" value="${escapeHtml(s.hpWali)||''}" placeholder="08xxxxxxxxxx">
@@ -959,6 +959,20 @@ async function backfillThumbnailFotoLama(){
         [t.kolomThumb]: pubThumb.publicUrl
       }).eq('id', t.id);
       if(updError) throw updError;
+      // Update state lokal langsung (kita sudah punya URL barunya di sini) --
+      // supaya di akhir proses tidak perlu loadAll() penuh untuk menyegarkan tampilan.
+      if(t.tabel === 'santri'){
+        const sLokal = DB.santri.find(x => x.id === t.id);
+        if(sLokal){
+          if(t.kolomMedium === 'foto_url'){ sLokal.foto = pubMed.publicUrl; sLokal.fotoThumb = pubThumb.publicUrl; }
+          else { sLokal.fotoWali = pubMed.publicUrl; sLokal.fotoWaliThumb = pubThumb.publicUrl; }
+        }
+      } else if(t.tabel === 'mahram'){
+        for(const sLokal of DB.santri){
+          const mLokal = (sLokal.mahram||[]).find(x => x.id === t.id);
+          if(mLokal){ mLokal.foto = pubMed.publicUrl; mLokal.fotoThumb = pubThumb.publicUrl; break; }
+        }
+      }
       ok++;
       tulis(`&#10003; ${escapeHtml(t.label)} -- selesai`);
     } catch(e){
@@ -968,7 +982,7 @@ async function backfillThumbnailFotoLama(){
   }
   tulis(`<b>Selesai.</b> Berhasil: ${ok}, gagal: ${gagal}.`);
   if(gagal > 0) tulis('Yang gagal bisa dicoba lagi dengan menekan tombol ini sekali lagi (yang sudah berhasil otomatis dilewati).');
-  await loadAll();
+  idbSave(DB);
   renderKelolaKegiatan();
 }
 async function saveSantri(id, isNew){
@@ -1044,7 +1058,10 @@ async function resetKodeWali(id, {konfirmasi=true}={}){
     alert('Gagal membuat/reset kode wali: ' + (data?.error || error.message));
     return;
   }
-  await loadAll();
+  /* Cuma kolom kode_wali santri ini yang berubah -- update state lokal saja,
+     tidak perlu loadAll() penuh (hemat egress, terutama tabel riwayat yang besar). */
+  const sLokal = DB.santri.find(x => x.id === id);
+  if(sLokal) sLokal.kodeWali = data.data.kode_wali_baru;
   openSantriDetail(id);
   alert(`Kode wali baru: ${data.data.kode_wali_baru}\nSilakan cetak ulang kartu wali.`);
   openCardWali(id);
@@ -1053,7 +1070,8 @@ async function deleteSantri(id){
   if(!confirm('Hapus data santri ini?')) return;
   const { error } = await sb.from('santri').delete().eq('id', id);
   if(error){ alert('Gagal menghapus: ' + error.message); return; }
-  await loadAll();
+  // Hapus dari state lokal saja -- tidak perlu loadAll() penuh.
+  DB.santri = DB.santri.filter(x => x.id !== id);
   closeModal();
   renderSantriPage();
 }
@@ -1067,7 +1085,7 @@ function openSantriDetail(id){
   document.getElementById('content').innerHTML = `
     <button class="btn btn-sm" onclick="renderSantriPage()">&larr; Kembali</button>
     <div class="card" style="margin-top:10px;text-align:center">
-      ${s.foto?`<img src="${s.foto}" style="width:88px;height:88px;border-radius:50%;object-fit:cover">`:`<div class="avatar" style="width:88px;height:88px;font-size:26px;margin:0 auto">${escapeHtml(initial(s.nama))}</div>`}
+      ${s.foto?`<img src="${s.fotoThumb||s.foto}" style="width:88px;height:88px;border-radius:50%;object-fit:cover">`:`<div class="avatar" style="width:88px;height:88px;font-size:26px;margin:0 auto">${escapeHtml(initial(s.nama))}</div>`}
       <h2 style="margin-top:10px">${escapeHtml(s.nama)}</h2>
       <p class="muted">No. induk ${escapeHtml(s.noInduk)}</p>
       <div style="margin-top:6px">
@@ -1313,7 +1331,8 @@ async function toggleProgramInline(id){
   const baru = urutan[s.program] || 'Takhossus';
   const { error } = await sb.from('santri').update({ program: baru }).eq('id', id);
   if(error){ alert('Gagal menyimpan: ' + error.message); return; }
-  await loadAll();
+  // Cuma kolom program yang berubah -- update state lokal saja.
+  s.program = baru;
   openSantriDetail(id);
 }
 
@@ -2751,14 +2770,17 @@ function renderKelolaKegiatan(){
 async function addKegiatan(){
   const nama = val('newKegiatan'); if(!nama) return;
   const programKhusus = val('newKegiatanProgram') || null;
-  const { error } = await sb.from('kegiatan').insert({ nama, program_khusus: programKhusus });
+  const { data: inserted, error } = await sb.from('kegiatan').insert({ nama, program_khusus: programKhusus }).select('id, nama, program_khusus').single();
   if(error){ alert('Gagal menyimpan: ' + error.message); return; }
-  await loadAll(); renderKelolaKegiatan();
+  // Tambahkan ke state lokal saja -- tidak perlu loadAll() penuh.
+  DB.kegiatan.push({ id: inserted.id, nama: inserted.nama, programKhusus: inserted.program_khusus || null });
+  renderKelolaKegiatan();
 }
 async function delKegiatan(id){
   const { error } = await sb.from('kegiatan').delete().eq('id', id);
   if(error){ alert('Gagal menghapus: ' + error.message); return; }
-  await loadAll(); renderKelolaKegiatan();
+  DB.kegiatan = DB.kegiatan.filter(k => k.id !== id);
+  renderKelolaKegiatan();
 }
 
 /* ---------- TAB PEMBINA (data pembina) ---------- */
@@ -2801,26 +2823,32 @@ async function savePembina(id, isNew){
   const row = { nama, tetala: val('f_pTetala'), alamat: val('f_pAlamat') };
   if(OFFLINE_MODE){ alert('Sedang mode offline (tidak ada internet). Data tidak bisa disimpan sekarang.'); return; }
   if(isNew){
-    const { error } = await sb.from('pembina').insert({ ...row, aktif: true });
+    const { data: inserted, error } = await sb.from('pembina').insert({ ...row, aktif: true }).select('id, nama, program, tetala, alamat, aktif').single();
     if(error){ alert('Gagal menyimpan: ' + error.message); return; }
-    await loadAll(); closeModal(); renderPembinaPage();
+    // Tambahkan ke state lokal saja -- tidak perlu loadAll() penuh.
+    DB.pembina.push({ id: inserted.id, nama: inserted.nama, program: inserted.program, tetala: inserted.tetala || '', alamat: inserted.alamat || '', aktif: inserted.aktif });
+    closeModal(); renderPembinaPage();
   } else {
     const { error } = await sb.from('pembina').update(row).eq('id', id);
     if(error){ alert('Gagal menyimpan: ' + error.message); return; }
-    await loadAll(); closeModal(); renderPembinaPage();
+    const p = DB.pembina.find(x => x.id === id);
+    if(p) Object.assign(p, row);
+    closeModal(); renderPembinaPage();
   }
 }
 async function togglePembinaAktif(id){
   const p = DB.pembina.find(x=>x.id===id);
   const { error } = await sb.from('pembina').update({ aktif: !p.aktif }).eq('id', id);
   if(error){ alert('Gagal menyimpan: ' + error.message); return; }
-  await loadAll(); closeModal(); renderPembinaPage();
+  p.aktif = !p.aktif;
+  closeModal(); renderPembinaPage();
 }
 async function deletePembina(id){
   if(!confirm('Hapus data pembina ini?')) return;
   const { error } = await sb.from('pembina').delete().eq('id', id);
   if(error){ alert('Gagal menghapus: ' + error.message); return; }
-  await loadAll(); closeModal(); renderPembinaPage();
+  DB.pembina = DB.pembina.filter(x => x.id !== id);
+  closeModal(); renderPembinaPage();
 }
 
 /* ---------- MODAL ---------- */
