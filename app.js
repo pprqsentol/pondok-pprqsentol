@@ -821,7 +821,13 @@ function resizeGambarKeBlob(img, maxSisi, kualitas){
 }
 
 /* Baca file foto dari input, lalu hasilkan dua versi terkompres sekaligus
-   (thumbnail mini + ukuran sedang) dari gambar yang sama. */
+   (thumbnail mini + ukuran sedang) dari gambar yang sama.
+   Kalau file yang dipilih SUDAH berformat WebP dan dimensinya sudah <= ukuran
+   "sedang" (mis. karena memang sudah dikompres manual sebelum diupload), file
+   itu dipakai apa adanya untuk versi sedang -- tidak didekode & dikompres ulang,
+   supaya tidak ada kompresi berlapis (generasi ke-2) yang cuma menurunkan kualitas
+   tanpa menghemat ukuran file. Thumbnail tetap selalu dibuat baru dari gambar yang
+   sama, karena ukurannya memang harus lebih kecil lagi untuk daftar/list. */
 function kompresGambarDuaUkuran(file){
   return new Promise((resolve, reject)=>{
     const reader = new FileReader();
@@ -831,9 +837,12 @@ function kompresGambarDuaUkuran(file){
       img.onerror = () => reject(new Error('File yang dipilih bukan gambar yang valid'));
       img.onload = async ()=>{
         try {
+          const sudahWebpPas = file.type === 'image/webp' && img.width <= FOTO_MEDIUM_MAX && img.height <= FOTO_MEDIUM_MAX;
           const [thumb, medium] = await Promise.all([
             resizeGambarKeBlob(img, FOTO_THUMB_MAX, FOTO_THUMB_KUALITAS),
-            resizeGambarKeBlob(img, FOTO_MEDIUM_MAX, FOTO_MEDIUM_KUALITAS)
+            sudahWebpPas
+              ? Promise.resolve({ blob: file, ext: 'webp', contentType: 'image/webp' })
+              : resizeGambarKeBlob(img, FOTO_MEDIUM_MAX, FOTO_MEDIUM_KUALITAS)
           ]);
           resolve({ thumb, medium });
         } catch(err){ reject(err); }
@@ -880,6 +889,87 @@ async function readImageTo(input, hiddenId){
   } finally {
     FOTO_UPLOADING[hiddenId] = false;
   }
+}
+
+/* ---------- BACKFILL: kompres foto lama (sebelum ada thumbnail) ke WebP 2 ukuran ---------- */
+/* Alat sekali-jalan (dipanggil dari halaman Kelola, khusus admin) untuk foto-foto yang
+   sudah terlanjur diupload sebelum fitur thumbnail ada -- foto_url/foto_wali/mahram.foto_url
+   yang belum punya pasangan kolom thumbnail-nya diunduh ulang, dikompres ulang jadi WebP
+   dalam 2 ukuran (thumbnail + sedang) lewat fungsi yang sama dengan upload biasa, lalu
+   diupload sebagai file BARU (file lama tidak dihapus/ditimpa, supaya aman kalau proses
+   berhenti di tengah jalan) dan kolomnya diisi. Baris yang thumbnail-nya sudah terisi
+   otomatis dilewati, jadi tombol ini aman ditekan berkali-kali (mis. kalau ada yang gagal
+   di percobaan sebelumnya, tinggal jalankan lagi). */
+async function backfillThumbnailFotoLama(){
+  if(!isAdmin()){ alert('Hanya admin pusat yang bisa menjalankan ini.'); return; }
+  if(!confirm('Proses ini akan mengunduh ulang & mengompres semua foto lama (santri, wali, mahram) yang belum punya thumbnail, lalu mengunggahnya sebagai WebP. Bisa memakan waktu beberapa menit tergantung jumlah foto & koneksi internet. Lanjutkan?')) return;
+
+  const btn = document.getElementById('backfillBtn');
+  const log = document.getElementById('backfillLog');
+  const tulis = (t)=>{ if(log){ log.innerHTML += t + '<br>'; log.scrollTop = log.scrollHeight; } };
+  if(btn) btn.disabled = true;
+  if(log) log.innerHTML = '';
+
+  // Kumpulkan semua foto lama yang belum punya thumbnail dari data yang sudah dimuat (DB.santri).
+  const target = [];
+  DB.santri.forEach(s=>{
+    if(s.foto && !s.fotoThumb) target.push({ tabel:'santri', id:s.id, url:s.foto, kolomMedium:'foto_url', kolomThumb:'foto_thumb_url', label:`Foto santri: ${s.nama}` });
+    if(s.fotoWali && !s.fotoWaliThumb) target.push({ tabel:'santri', id:s.id, url:s.fotoWali, kolomMedium:'foto_wali', kolomThumb:'foto_wali_thumb_url', label:`Foto wali: ${s.namaWali || s.nama}` });
+    (s.mahram||[]).forEach(m=>{
+      if(m.foto && !m.fotoThumb) target.push({ tabel:'mahram', id:m.id, url:m.foto, kolomMedium:'foto_url', kolomThumb:'foto_thumb_url', label:`Foto mahram: ${m.nama}` });
+    });
+  });
+
+  if(target.length===0){
+    tulis('Tidak ada foto lama yang perlu diproses -- semua foto sudah punya thumbnail.');
+    if(btn) btn.disabled = false;
+    return;
+  }
+  tulis(`Ditemukan ${target.length} foto untuk diproses...`);
+
+  let ok = 0, gagal = 0;
+  for(const t of target){
+    try{
+      const resp = await fetch(t.url);
+      if(!resp.ok) throw new Error('Gagal mengunduh foto (HTTP ' + resp.status + ')');
+      const blobAsli = await resp.blob();
+      const objUrl = URL.createObjectURL(blobAsli);
+      const img = await new Promise((resolve, reject)=>{
+        const im = new Image();
+        im.onload = ()=>resolve(im);
+        im.onerror = ()=>reject(new Error('File bukan gambar yang valid'));
+        im.src = objUrl;
+      });
+      const [thumb, medium] = await Promise.all([
+        resizeGambarKeBlob(img, FOTO_THUMB_MAX, FOTO_THUMB_KUALITAS),
+        resizeGambarKeBlob(img, FOTO_MEDIUM_MAX, FOTO_MEDIUM_KUALITAS)
+      ]);
+      URL.revokeObjectURL(objUrl);
+      const rand = `backfill_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+      const [medRes, thumbRes] = await Promise.all([
+        sb.storage.from('foto-santri').upload(`${rand}.${medium.ext}`, medium.blob, { contentType: medium.contentType, upsert: false }),
+        sb.storage.from('foto-santri').upload(`${rand}_thumb.${thumb.ext}`, thumb.blob, { contentType: thumb.contentType, upsert: false })
+      ]);
+      if(medRes.error) throw medRes.error;
+      if(thumbRes.error) throw thumbRes.error;
+      const { data: pubMed } = sb.storage.from('foto-santri').getPublicUrl(medRes.data.path);
+      const { data: pubThumb } = sb.storage.from('foto-santri').getPublicUrl(thumbRes.data.path);
+      const { error: updError } = await sb.from(t.tabel).update({
+        [t.kolomMedium]: pubMed.publicUrl,
+        [t.kolomThumb]: pubThumb.publicUrl
+      }).eq('id', t.id);
+      if(updError) throw updError;
+      ok++;
+      tulis(`&#10003; ${escapeHtml(t.label)} -- selesai`);
+    } catch(e){
+      gagal++;
+      tulis(`&#10007; ${escapeHtml(t.label)} -- gagal: ${escapeHtml((e && e.message) || String(e))}`);
+    }
+  }
+  tulis(`<b>Selesai.</b> Berhasil: ${ok}, gagal: ${gagal}.`);
+  if(gagal > 0) tulis('Yang gagal bisa dicoba lagi dengan menekan tombol ini sekali lagi (yang sudah berhasil otomatis dilewati).');
+  await loadAll();
+  renderKelolaKegiatan();
 }
 async function saveSantri(id, isNew){
   const data = {
@@ -2649,6 +2739,13 @@ function renderKelolaKegiatan(){
       </select>
       <div class="btn-row"><button class="btn btn-accent" onclick="addKegiatan()">Tambah</button></div>
     </div>
+    ${isAdmin() ? `
+    <div class="card">
+      <div class="card-title">Kompres foto lama ke WebP + thumbnail</div>
+      <p class="muted" style="margin:0 0 8px">Alat sekali-jalan untuk foto santri/wali/mahram yang diupload sebelum fitur dua-ukuran ini ada. Aman ditekan berkali-kali &mdash; foto yang sudah punya thumbnail otomatis dilewati.</p>
+      <div class="btn-row"><button class="btn btn-accent" id="backfillBtn" onclick="backfillThumbnailFotoLama()">Proses foto lama</button></div>
+      <div id="backfillLog" style="margin-top:10px;max-height:220px;overflow-y:auto;font-size:12px;font-family:monospace;background:#f5f5f5;padding:8px;border-radius:6px"></div>
+    </div>` : ''}
   `;
 }
 async function addKegiatan(){
