@@ -51,12 +51,18 @@ function kopWordHeader(){
 const STATUS_TO_DB = { h: 'Hadir', a: 'Alpha', i: 'Izin' };
 const STATUS_FROM_DB = { Hadir: 'h', Alpha: 'a', Izin: 'i', Sakit: 'a' };
 
+/* Daftar kolom santri yang dipakai berulang di beberapa query (load awal, insert, update)
+   -- disatukan di sini supaya kolom foto_thumb_url/foto_wali_thumb_url tidak ketinggalan
+   kalau suatu saat ditambah kolom lain lagi. */
+const SANTRI_SELECT_COLS = 'id, nama, no_induk, foto_url, foto_thumb_url, tetala, alamat, tanggal_masuk, jenis_kelamin, nama_ayah, nama_ibu, nama_wali, foto_wali, foto_wali_thumb_url, kode_wali, kelas, kamar, no_hp_wali, program, hafalan_awal, sembunyikan_dari_pembina, bebas_tagihan_iuran';
+const MAHRAM_SELECT_COLS = 'id, santri_id, nama, hubungan, no_hp, foto_url, foto_thumb_url';
+
 function santriRowToApp(r) {
   return {
-    id: r.id, nama: r.nama, noInduk: r.no_induk, foto: r.foto_url || '',
+    id: r.id, nama: r.nama, noInduk: r.no_induk, foto: r.foto_url || '', fotoThumb: r.foto_thumb_url || '',
     tetala: r.tetala || '', alamat: r.alamat || '', tglMasuk: r.tanggal_masuk || '',
     jenisKelamin: r.jenis_kelamin || 'L', namaAyah: r.nama_ayah || '', namaIbu: r.nama_ibu || '',
-    namaWali: r.nama_wali || '', fotoWali: r.foto_wali || '', kodeWali: r.kode_wali || '',
+    namaWali: r.nama_wali || '', fotoWali: r.foto_wali || '', fotoWaliThumb: r.foto_wali_thumb_url || '', kodeWali: r.kode_wali || '',
     kelas: r.kelas || '7', kamar: r.kamar || '', hpWali: r.no_hp_wali || '', program: r.program || 'Non-Takhossus',
     hafalanAwal: r.hafalan_awal || 0,
     sembunyikanDariPembina: r.sembunyikan_dari_pembina || false,
@@ -66,10 +72,10 @@ function santriRowToApp(r) {
 }
 function santriAppToRow(s) {
   return {
-    nama: s.nama, no_induk: s.noInduk, foto_url: s.foto || null, tetala: s.tetala || null,
+    nama: s.nama, no_induk: s.noInduk, foto_url: s.foto || null, foto_thumb_url: s.fotoThumb || null, tetala: s.tetala || null,
     alamat: s.alamat || null, tanggal_masuk: s.tglMasuk || null,
     jenis_kelamin: s.jenisKelamin || null, nama_ayah: s.namaAyah || null, nama_ibu: s.namaIbu || null,
-    nama_wali: s.namaWali || null, foto_wali: s.fotoWali || null,
+    nama_wali: s.namaWali || null, foto_wali: s.fotoWali || null, foto_wali_thumb_url: s.fotoWaliThumb || null,
     kelas: s.kelas || null, kamar: s.kamar || null,
     no_hp_wali: s.hpWali || null, program: s.program || 'Non-Takhossus',
     hafalan_awal: s.hafalanAwal || 0
@@ -233,7 +239,7 @@ function tesJuzMenungguSantri(santriId){
 }
 
 function mahramRowToApp(r) {
-  return { id: r.id, nama: r.nama, hubungan: r.hubungan || '', hp: r.no_hp || '', foto: r.foto_url || '' };
+  return { id: r.id, nama: r.nama, hubungan: r.hubungan || '', hp: r.no_hp || '', foto: r.foto_url || '', fotoThumb: r.foto_thumb_url || '' };
 }
 
 /* ====== 3b. INDEXEDDB (cadangan offline, bukan server utama) ======
@@ -284,8 +290,8 @@ async function loadAll() {
   try {
     const [kegiatanRes, santriRes, mahramRes, absensiRes, hafalanRes, murojaahRes, idadRes, tesJuzRes, saldoRes, pembinaRes] = await Promise.all([
       sb.from('kegiatan').select('id, nama, program_khusus').eq('aktif', true).order('nama'),
-      sb.from('santri').select('id, nama, no_induk, foto_url, tetala, alamat, tanggal_masuk, jenis_kelamin, nama_ayah, nama_ibu, nama_wali, foto_wali, kode_wali, kelas, kamar, no_hp_wali, program, hafalan_awal, sembunyikan_dari_pembina, bebas_tagihan_iuran').eq('aktif', true).order('nama'),
-      sb.from('mahram').select('id, santri_id, nama, hubungan, no_hp, foto_url'),
+      sb.from('santri').select(SANTRI_SELECT_COLS).eq('aktif', true).order('nama'),
+      sb.from('mahram').select(MAHRAM_SELECT_COLS),
       sb.from('absensi').select('id, santri_id, kegiatan_id, tanggal, status'),
       sb.from('hafalan').select('id, santri_id, tanggal, juz, halaman_dari, halaman_sampai, kegiatan_id'),
       sb.from('murojaah').select('id, santri_id, kegiatan_id, tanggal, juz, cakupan'),
@@ -657,7 +663,7 @@ function renderSantriListBody(){
       ${santri.length===0 ? '<p class="muted">Tidak ada santri yang cocok dengan pencarian/filter.</p>' : santri.map(s=>`
         <div class="list-item">
           <div style="display:flex;align-items:center;flex:1;gap:10px;cursor:pointer;min-width:0" onclick="santriDetailTab='informasi'; openSantriDetail('${s.id}')">
-            ${s.foto ? `<img class="avatar" src="${s.foto}">` : `<div class="avatar">${escapeHtml(initial(s.nama))}</div>`}
+            ${s.fotoThumb || s.foto ? `<img class="avatar" src="${s.fotoThumb || s.foto}">` : `<div class="avatar">${escapeHtml(initial(s.nama))}</div>`}
             <div style="flex:1;min-width:0">
               <div class="name">${escapeHtml(s.nama)}</div>
               <div class="sub">No. induk ${escapeHtml(s.noInduk)}</div>
@@ -702,7 +708,7 @@ function printSantriTable(){
 }
 
 function openSantriForm(existing){
-  const s = existing || {id:null, nama:'', noInduk:String(1000+DB.santri.length+1), foto:'', tetala:'', alamat:'', tglMasuk:todayStr(), jenisKelamin:'L', namaAyah:'', namaIbu:'', namaWali:'', fotoWali:'', kelas:'7', kamar:'', hpWali:'', program: !isAdmin()?SESSION.program:'Non-Takhossus', hafalanAwal:0};
+  const s = existing || {id:null, nama:'', noInduk:String(1000+DB.santri.length+1), foto:'', fotoThumb:'', tetala:'', alamat:'', tglMasuk:todayStr(), jenisKelamin:'L', namaAyah:'', namaIbu:'', namaWali:'', fotoWali:'', fotoWaliThumb:'', kelas:'7', kamar:'', hpWali:'', program: !isAdmin()?SESSION.program:'Non-Takhossus', hafalanAwal:0};
   const isNew = !existing;
   const konversiAwal = juzAwalFromPages(s.hafalanAwal||0);
   const juzAwal = (s.hafalanAwal||0) > 0 ? konversiAwal.juz : 0;
@@ -718,6 +724,7 @@ function openSantriForm(existing){
     <input type="file" accept="image/*" onchange="readImageTo(this,'f_foto')">
     <img id="f_fotoPreview" src="${s.foto||''}" style="width:70px;height:70px;border-radius:50%;object-fit:cover;margin-top:6px;${s.foto?'':'display:none'}">
     <input type="hidden" id="f_foto" value="${s.foto||''}">
+    <input type="hidden" id="f_fotoThumb" value="${s.fotoThumb||''}">
     <label>Nama lengkap</label><input id="f_nama" value="${escapeHtml(s.nama)}">
     <label>No. induk (untuk kode QR)</label><input id="f_noInduk" value="${escapeHtml(s.noInduk)}">
     <label>Jenis kelamin</label>
@@ -742,6 +749,7 @@ function openSantriForm(existing){
     <input type="file" accept="image/*" onchange="readImageTo(this,'f_fotoWali')">
     <img id="f_fotoWaliPreview" src="${s.fotoWali||''}" style="width:60px;height:60px;border-radius:50%;object-fit:cover;margin-top:6px;${s.fotoWali?'':'display:none'}">
     <input type="hidden" id="f_fotoWali" value="${s.fotoWali||''}">
+    <input type="hidden" id="f_fotoWaliThumb" value="${s.fotoWaliThumb||''}">
     <label>No. HP wali</label><input id="f_hpWali" type="tel" inputmode="numeric" value="${escapeHtml(s.hpWali)||''}" placeholder="08xxxxxxxxxx">
     ${isNew?'<p class="muted" style="margin:6px 0 0">Kode wali akan dibuat otomatis (acak) setelah data ini disimpan.</p>':(s.kodeWali?`<p class="muted" style="margin:6px 0 0">Kode wali: <b style="font-size:15px;letter-spacing:1px">${s.kodeWali}</b> (untuk login Aplikasi Wali, tetap sama, tidak berubah kalau data diedit)</p>`:'')}
     <label>Program</label>
@@ -775,30 +783,60 @@ function setProgram(p){
    disimpan duluan sebelum URL foto dari Storage selesai didapat. */
 const FOTO_UPLOADING = {};
 
-/* Kompres & resize gambar lewat <canvas> sebelum diupload -- maksimal
-   400x400px, kualitas JPEG ~70%. Ini memangkas ukuran file foto sampai
-   80-90% dibanding foto asli dari kamera HP, jadi jauh lebih hemat
-   kuota Storage & bandwidth (egress) saat foto ditarik lagi nantinya. */
-function kompresGambar(file, maxW = 400, maxH = 400, kualitas = 0.7){
+/* Setiap foto yang diupload dibuat DUA ukuran, bukan satu ukuran dipakai di semua
+   tempat lagi:
+   - THUMB : untuk avatar di daftar/list (ditampilkan kecil, mis. 38px) -- dibuat
+             sekecil mungkin karena dimuat berkali-kali sekaligus dalam satu daftar.
+   - MEDIUM: untuk kartu cetak & halaman detail (ditampilkan lebih besar) -- resolusi
+             lebih tinggi supaya tetap tajam saat dicetak/diunduh sebagai kartu ID.
+   Keduanya dikompres sebagai WebP (jauh lebih kecil dari JPEG di kualitas yang sama);
+   browser yang tidak mendukung enkode WebP lewat canvas otomatis fallback ke JPEG. */
+const FOTO_THUMB_MAX = 160, FOTO_THUMB_KUALITAS = 0.6;
+const FOTO_MEDIUM_MAX = 500, FOTO_MEDIUM_KUALITAS = 0.75;
+
+/* Resize satu gambar (sudah dimuat sebagai <img>) ke ukuran maksimum tertentu lewat
+   <canvas>, lalu encode sebagai WebP. Kalau browser tidak bisa encode WebP (hasil
+   toBlob bukan bertipe image/webp), otomatis diulang sebagai JPEG. */
+function resizeGambarKeBlob(img, maxSisi, kualitas){
+  return new Promise((resolve, reject)=>{
+    let { width, height } = img;
+    if(width > maxSisi || height > maxSisi){
+      const rasio = Math.min(maxSisi / width, maxSisi / height);
+      width = Math.round(width * rasio);
+      height = Math.round(height * rasio);
+    }
+    const canvas = document.createElement('canvas');
+    canvas.width = width; canvas.height = height;
+    canvas.getContext('2d').drawImage(img, 0, 0, width, height);
+    canvas.toBlob(blob=>{
+      if(!blob){ reject(new Error('Gagal mengompres gambar')); return; }
+      if(blob.type === 'image/webp'){ resolve({ blob, ext: 'webp', contentType: 'image/webp' }); return; }
+      // Browser ini tidak mendukung enkode WebP -- fallback ke JPEG.
+      canvas.toBlob(blob2=>{
+        if(blob2) resolve({ blob: blob2, ext: 'jpg', contentType: 'image/jpeg' });
+        else reject(new Error('Gagal mengompres gambar'));
+      }, 'image/jpeg', kualitas);
+    }, 'image/webp', kualitas);
+  });
+}
+
+/* Baca file foto dari input, lalu hasilkan dua versi terkompres sekaligus
+   (thumbnail mini + ukuran sedang) dari gambar yang sama. */
+function kompresGambarDuaUkuran(file){
   return new Promise((resolve, reject)=>{
     const reader = new FileReader();
     reader.onerror = () => reject(new Error('Gagal membaca file foto'));
     reader.onload = e=>{
       const img = new Image();
       img.onerror = () => reject(new Error('File yang dipilih bukan gambar yang valid'));
-      img.onload = ()=>{
-        let { width, height } = img;
-        if(width > maxW || height > maxH){
-          const rasio = Math.min(maxW / width, maxH / height);
-          width = Math.round(width * rasio);
-          height = Math.round(height * rasio);
-        }
-        const canvas = document.createElement('canvas');
-        canvas.width = width; canvas.height = height;
-        canvas.getContext('2d').drawImage(img, 0, 0, width, height);
-        canvas.toBlob(blob=>{
-          if(blob) resolve(blob); else reject(new Error('Gagal mengompres gambar'));
-        }, 'image/jpeg', kualitas);
+      img.onload = async ()=>{
+        try {
+          const [thumb, medium] = await Promise.all([
+            resizeGambarKeBlob(img, FOTO_THUMB_MAX, FOTO_THUMB_KUALITAS),
+            resizeGambarKeBlob(img, FOTO_MEDIUM_MAX, FOTO_MEDIUM_KUALITAS)
+          ]);
+          resolve({ thumb, medium });
+        } catch(err){ reject(err); }
       };
       img.src = e.target.result;
     };
@@ -809,22 +847,34 @@ function kompresGambar(file, maxW = 400, maxH = 400, kualitas = 0.7){
 /* Foto disimpan di Supabase Storage (bucket "foto-santri"), kolom di database
    cuma menyimpan URL publiknya -- bukan base64 mentah seperti sebelumnya.
    URL Storage bisa di-cache browser, jadi foto yang sama tidak perlu
-   ditarik ulang tiap kali data dimuat. */
+   ditarik ulang tiap kali data dimuat.
+   Field hidden untuk thumbnail memakai nama `${hiddenId}Thumb`, mis. untuk
+   hiddenId "f_foto" -> thumbnail disimpan di input hidden "f_fotoThumb". */
 async function readImageTo(input, hiddenId){
   const file = input.files[0]; if(!file) return;
   const prev = document.getElementById(hiddenId + 'Preview');
+  const thumbHiddenId = hiddenId + 'Thumb';
   FOTO_UPLOADING[hiddenId] = true;
   try {
-    const blob = await kompresGambar(file);
-    // Preview langsung pakai foto hasil kompres, tidak perlu menunggu upload selesai.
-    if(prev){ prev.src = URL.createObjectURL(blob); prev.style.display = 'block'; }
-    const namaFile = `${hiddenId}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}.jpg`;
-    const { data, error } = await sb.storage.from('foto-santri').upload(namaFile, blob, {
-      contentType: 'image/jpeg', upsert: false
-    });
-    if(error){ alert('Gagal mengunggah foto: ' + error.message); return; }
-    const { data: pub } = sb.storage.from('foto-santri').getPublicUrl(data.path);
+    const { thumb, medium } = await kompresGambarDuaUkuran(file);
+    // Preview langsung pakai foto ukuran sedang, tidak perlu menunggu upload selesai.
+    if(prev){ prev.src = URL.createObjectURL(medium.blob); prev.style.display = 'block'; }
+    const rand = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    const [medRes, thumbRes] = await Promise.all([
+      sb.storage.from('foto-santri').upload(`${hiddenId}_${rand}.${medium.ext}`, medium.blob, {
+        contentType: medium.contentType, upsert: false
+      }),
+      sb.storage.from('foto-santri').upload(`${hiddenId}_${rand}_thumb.${thumb.ext}`, thumb.blob, {
+        contentType: thumb.contentType, upsert: false
+      })
+    ]);
+    if(medRes.error){ alert('Gagal mengunggah foto: ' + medRes.error.message); return; }
+    if(thumbRes.error){ alert('Gagal mengunggah foto (thumbnail): ' + thumbRes.error.message); return; }
+    const { data: pub } = sb.storage.from('foto-santri').getPublicUrl(medRes.data.path);
+    const { data: pubThumb } = sb.storage.from('foto-santri').getPublicUrl(thumbRes.data.path);
     document.getElementById(hiddenId).value = pub.publicUrl;
+    const thumbInput = document.getElementById(thumbHiddenId);
+    if(thumbInput) thumbInput.value = pubThumb.publicUrl;
   } catch(e){
     alert('Gagal memproses foto: ' + (e.message || e));
   } finally {
@@ -833,11 +883,11 @@ async function readImageTo(input, hiddenId){
 }
 async function saveSantri(id, isNew){
   const data = {
-    nama: val('f_nama'), noInduk: val('f_noInduk'), foto: val('f_foto'),
+    nama: val('f_nama'), noInduk: val('f_noInduk'), foto: val('f_foto'), fotoThumb: val('f_fotoThumb'),
     tetala: val('f_tetala'), alamat: val('f_alamat'), tglMasuk: val('f_tglMasuk'),
     jenisKelamin: val('f_jenisKelamin'), kelas: val('f_kelas'), kamar: val('f_kamar'),
     namaAyah: val('f_namaAyah'), namaIbu: val('f_namaIbu'),
-    namaWali: val('f_namaWali'), fotoWali: val('f_fotoWali'),
+    namaWali: val('f_namaWali'), fotoWali: val('f_fotoWali'), fotoWaliThumb: val('f_fotoWaliThumb'),
     hpWali: val('f_hpWali'), program: val('f_program'),
     hafalanAwal: pagesFromJuzAwal(parseInt(val('f_juzAwal')), parseInt(val('f_halAwal')))
   };
@@ -853,7 +903,7 @@ async function saveSantri(id, isNew){
        kode acak, ulangi kalau kebetulan bentrok dengan kode yang sudah ada. */
     for(let i=0;i<5;i++){
       const kodeWali = buatKodeLoginBaru();
-      const { data: inserted, error } = await sb.from('santri').insert({ ...row, kode_wali: kodeWali }).select('id, nama, no_induk, foto_url, tetala, alamat, tanggal_masuk, jenis_kelamin, nama_ayah, nama_ibu, nama_wali, foto_wali, kode_wali, kelas, kamar, no_hp_wali, program, hafalan_awal, sembunyikan_dari_pembina, bebas_tagihan_iuran').single();
+      const { data: inserted, error } = await sb.from('santri').insert({ ...row, kode_wali: kodeWali }).select(SANTRI_SELECT_COLS).single();
       if(!error){
         /* Update state lokal saja (bukan loadAll penuh) -- santri baru langsung
            ditambahkan ke DB.santri tanpa perlu menarik ulang semua tabel/foto. */
@@ -870,7 +920,7 @@ async function saveSantri(id, isNew){
     }
     alert('Gagal membuat kode wali unik, coba tekan tombol Simpan sekali lagi.');
   } else {
-    const { data: updated, error } = await sb.from('santri').update(row).eq('id', id).select('id, nama, no_induk, foto_url, tetala, alamat, tanggal_masuk, jenis_kelamin, nama_ayah, nama_ibu, nama_wali, foto_wali, kode_wali, kelas, kamar, no_hp_wali, program, hafalan_awal, sembunyikan_dari_pembina, bebas_tagihan_iuran').single();
+    const { data: updated, error } = await sb.from('santri').update(row).eq('id', id).select(SANTRI_SELECT_COLS).single();
     if(error){ alert('Gagal menyimpan: ' + error.message); return; }
     /* Update baris santri ini saja di state lokal, sambil pertahankan daftar
        mahram yang sudah dimuat sebelumnya (tidak ikut dikembalikan oleh update ini). */
@@ -983,7 +1033,7 @@ function openSantriDetail(id){
         <div class="row"><div class="card-title">Mahram</div><button class="btn btn-sm" onclick="openMahramForm('${s.id}')">+ Tambah</button></div>
         ${(s.mahram||[]).length===0?'<p class="muted">Belum ada data mahram.</p>':s.mahram.map((m,i)=>`
           <div class="list-item">
-            ${m.foto?`<img class="avatar" src="${m.foto}">`:`<div class="avatar">${escapeHtml(initial(m.nama))}</div>`}
+            ${(m.fotoThumb || m.foto)?`<img class="avatar" src="${m.fotoThumb || m.foto}">`:`<div class="avatar">${escapeHtml(initial(m.nama))}</div>`}
             <div style="flex:1"><div class="name">${escapeHtml(m.nama)}</div><div class="sub">${escapeHtml(m.hubungan)} &middot; ${escapeHtml(m.hp)}</div></div>
             <button class="btn btn-sm" onclick="openCardMahram('${s.id}',${i})">Kartu</button>
           </div>`).join('')}
@@ -1184,6 +1234,7 @@ function openMahramForm(santriId){
     <input type="file" accept="image/*" onchange="readImageTo(this,'m_foto')">
     <img id="m_fotoPreview" style="width:60px;height:60px;border-radius:50%;object-fit:cover;margin-top:6px;display:none">
     <input type="hidden" id="m_foto">
+    <input type="hidden" id="m_fotoThumb">
     <label>Nama</label><input id="m_nama">
     <label>Hubungan</label>
     <select id="m_hubungan">
@@ -1203,8 +1254,9 @@ async function saveMahram(santriId){
   try {
     const hubungan = val('m_hubungan');
     const { data: inserted, error } = await sb.from('mahram').insert({
-      santri_id: santriId, nama, hubungan: hubungan || null, no_hp: val('m_hp') || null, foto_url: val('m_foto') || null
-    }).select('id, nama, hubungan, no_hp, foto_url').single();
+      santri_id: santriId, nama, hubungan: hubungan || null, no_hp: val('m_hp') || null,
+      foto_url: val('m_foto') || null, foto_thumb_url: val('m_fotoThumb') || null
+    }).select(MAHRAM_SELECT_COLS).single();
     if(error){ alert('Gagal menyimpan: ' + error.message); return; }
     /* Update state lokal saja -- tambahkan mahram baru ke santri terkait
        tanpa menarik ulang semua tabel (loadAll). */
