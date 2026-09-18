@@ -1,4 +1,4 @@
-const CACHE = 'pondok-rq-v25-select-kolom';
+const CACHE = 'pondok-rq-v27-rpc-kas';
 const FILES = [
   './',
   './index.html',

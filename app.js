@@ -494,6 +494,11 @@ async function refreshData(){
   const btn = document.getElementById('navRefreshBtn');
   if(btn) btn.classList.add('spinning');
   try{
+    // Tombol Refresh ini artinya admin secara sengaja minta data terbaru -- kosongkan cache
+    // Kas/Tagihan juga (lihat goPage) supaya benar-benar diambil ulang dari server, bukan cuma
+    // dianggap "sudah ada di memori" walau halaman yang sedang dibuka tidak berubah.
+    KAS_DATA = null;
+    TAGIHAN_DATA = null;
     await loadAll();
     const oldBanner = document.getElementById('offlineBanner');
     if(oldBanner) oldBanner.remove();
@@ -515,6 +520,16 @@ async function refreshData(){
   }
 }
 function goPage(p){
+  // Egress: KAS_DATA/TAGIHAN_DATA di-cache di memori supaya ganti sub-tab di DALAM satu halaman
+  // (mis. Kas<->Laba, Tagihan<->Iuran) tidak fetch ulang ke Supabase (lihat loadKasData/
+  // loadTagihanData). Tapi begitu admin BENAR-BENAR pindah ke halaman lain lalu balik lagi ke
+  // salah satu dari 3 halaman ini, cache-nya dianggap basi (mis. bendahara baru saja mencatat
+  // pembayaran di Aplikasi Keuangan) -- kosongkan di sini supaya kunjungan baru ke halamannya
+  // tetap ambil data terbaru dari server.
+  if(p!==currentPage && (p==='laporanToko' || p==='laporanKeuangan' || p==='tagihan')){
+    KAS_DATA = null;
+    TAGIHAN_DATA = null;
+  }
   currentPage = p;
   subViewBack = null; // pindah tab utama -> keluar dari sub-tampilan mana pun yang sedang terbuka
   document.querySelectorAll('.navitem').forEach(el=>el.classList.toggle('active', el.dataset.p===p));
@@ -1818,95 +1833,76 @@ function renderLaporanAbsensi(santri){
 let kasFrom = '', kasTo = todayStr();
 let kasPreset = 'custom'; // 'custom' | 'harian' | 'mingguan' | 'bulanan' | 'tahunan'
 let laporanTokoTab = 'kas'; // 'kas' | 'laba'
-let KAS_DATA = null;
+let KAS_DATA = null; // { kasAwal, ringkasan, periode, periodeFrom, periodeTo } -- ringkasan &
+                      // periode dihitung SERVER-SIDE lewat RPC kas_ringkasan()/kas_periode()
+                      // (lihat kas-rpc.sql), bukan lagi tarik seluruh kas_mutasi/transaksi_toko/
+                      // produk mentah ke HP lalu dijumlah di JavaScript.
 const KAS_LOKASI_DEFAULT = 'Utama'; // nilai lokasi tetap untuk baris baru (kolom lokasi tidak dipakai lagi di UI)
 
 function formatRupiah(n){
   return 'Rp' + Math.round(n||0).toLocaleString('id-ID');
 }
-async function loadKasData(){
+// force=true dipakai oleh tombol Refresh utama supaya benar-benar ambil data terbaru dari server.
+async function loadKasData(force){
+  // Egress: RPC kas_ringkasan()/kas_periode() sudah agregat (hasilnya cuma beberapa angka,
+  // bukan ribuan baris mentah), jadi tidak perlu caching rumit -- cukup skip kalau periode
+  // (kasFrom/kasTo) sama seperti terakhir dimuat dan belum diminta paksa reload.
+  if(!force && KAS_DATA && !KAS_DATA.error && KAS_DATA.periodeFrom===kasFrom && KAS_DATA.periodeTo===kasTo){
+    return;
+  }
   try {
-    const [kasAwalRes, mutasiRes, produkRes, transaksiRes] = await Promise.all([
+    const [kasAwalRes, ringkasanRes, periodeRes] = await Promise.all([
       sb.from('pengaturan_kas').select('lokasi, kas_awal'),
-      sb.from('kas_mutasi').select('arah, jumlah, tanggal, kategori'),
-      // harga_jual TIDAK diambil lagi -- Pondok hanya perlu harga_beli untuk menilai stok gudang
-      // (Nilai Stok). Laba tidak lagi dihitung dari harga produk, lihat labaKotorTransaksi().
-      sb.from('produk').select('id,stok,harga_beli'),
-      // Cuma kolom yang dipakai hitungKas()/hitungLaba() (dibatalkan, metode, status_bayar,
-      // total, modal_total, created_at) -- sama seperti Aplikasi Kasir Toko cuma baca yang perlu.
-      sb.from('transaksi_toko').select('dibatalkan, metode, status_bayar, total, modal_total, created_at')
+      // Posisi Kas & Modal SAAT INI (kumulatif sejak awal) -- dihitung di database lewat RPC
+      // kas_ringkasan(), bukan lagi tarik seluruh kas_mutasi/transaksi_toko/produk ke HP.
+      sb.rpc('kas_ringkasan'),
+      // Arus Kas & Laba untuk periode kasFrom..kasTo -- dihitung di database lewat RPC
+      // kas_periode(dari, sampai).
+      sb.rpc('kas_periode', { p_dari: kasFrom, p_sampai: kasTo })
     ]);
     if(kasAwalRes.error) throw kasAwalRes.error;
-    if(mutasiRes.error) throw mutasiRes.error;
-    if(produkRes.error) throw produkRes.error;
-    if(transaksiRes.error) throw transaksiRes.error;
+    if(ringkasanRes.error) throw ringkasanRes.error;
+    if(periodeRes.error) throw periodeRes.error;
     KAS_DATA = {
       kasAwal: kasAwalRes.data || [],
-      mutasi: mutasiRes.data || [],
-      produk: produkRes.data || [],
-      transaksiToko: transaksiRes.data || []
+      ringkasan: (ringkasanRes.data && ringkasanRes.data[0]) || {},
+      periode: (periodeRes.data && periodeRes.data[0]) || {},
+      periodeFrom: kasFrom,
+      periodeTo: kasTo
     };
   } catch(e){
     console.error('Gagal memuat data laporan toko:', e);
     // Simpan pesan error ASLI dari Supabase (bukan tulisan generik) supaya kelihatan langsung di
-    // layar HP — admin bisa screenshot tanpa perlu buka console browser di laptop.
+    // layar HP — admin bisa screenshot tanpa perlu buka console browser di laptop. Kalau RPC
+    // kas_ringkasan/kas_periode belum ada di database (lupa jalankan kas-rpc.sql), errornya
+    // akan muncul di sini juga ("function ... does not exist").
     KAS_DATA = { error: true, pesan: (e && (e.message || e.details || e.hint)) || JSON.stringify(e) };
   }
 }
-// PENTING: laba SELALU dibaca dari kolom modal_total (total = laba), yang diisi sekali oleh
-// RPC belanja_toko milik Aplikasi Kasir Toko saat transaksi dibuat. Aplikasi Pondok sengaja
-// TIDAK menghitung ulang laba dari harga produk sendiri — itu penyebab bug lama (laba beda
-// dengan app Toko kalau harga_beli produk diubah belakangan). Perhitungan laba tetap jadi
-// kewenangan app Toko; Pondok cuma membaca hasilnya.
-function labaKotorTransaksi(t){
-  return Number(t.total||0) - Number(t.modal_total||0);
-}
 function hitungKas(){
-  const modalAwal = KAS_DATA.kasAwal.reduce((s,k)=>s+Number(k.kas_awal||0),0);
-  // Baris manual di kas_mutasi (setor modal, beli stok, operasional, prive, lainnya) — diinput dari
-  // aplikasi Kasir Toko lewat tab Kas.
-  const kasMasuk = KAS_DATA.mutasi.filter(m=>m.arah==='masuk').reduce((s,m)=>s+Number(m.jumlah),0);
-  const kasKeluar = KAS_DATA.mutasi.filter(m=>m.arah==='keluar').reduce((s,m)=>s+Number(m.jumlah),0);
-
-  // Uang masuk OTOMATIS dari penjualan (tunai/bayar saldo) & pelunasan hutang — di aplikasi Kasir Toko
-  // ini SENGAJA tidak ditulis ke tabel kas_mutasi (supaya tidak dobel catat), jadi harus dihitung di sini
-  // langsung dari transaksi_toko, persis seperti logika daftarMutasiKas() di aplikasi Kasir Toko, supaya
-  // Saldo Kas & Modal di kedua aplikasi selalu selaras (aplikasi Pondok hanya melihat, input tetap di Kasir Toko).
-  const transaksiAktif = KAS_DATA.transaksiToko.filter(t=>!t.dibatalkan);
-  const kasMasukOtomatis = transaksiAktif.reduce((s,t)=>{
-    if(t.metode==='Tunai' || t.metode==='Saldo') return s + Number(t.total||0);
-    if(t.metode==='Hutang' && t.status_bayar==='lunas') return s + Number(t.total||0);
-    return s;
-  }, 0);
-
-  const totalSaldoKas = modalAwal + kasMasuk - kasKeluar + kasMasukOtomatis;
-
-  const totalNilaiStok = KAS_DATA.produk.reduce((s,p)=>s+Number(p.stok)*Number(p.harga_beli),0);
-
-  const totalLaba = transaksiAktif.reduce((s,t)=>s+labaKotorTransaksi(t), 0);
-
-  const totalPiutang = transaksiAktif.filter(t=>t.metode==='Hutang' && t.status_bayar==='belum_bayar').reduce((s,t)=>s+Number(t.total),0);
-
-  const modalSaatIni = totalSaldoKas + totalNilaiStok + totalPiutang - totalLaba;
-
-  const masukPeriode = KAS_DATA.mutasi.filter(m=>m.arah==='masuk' && (m.tanggal||'').slice(0,10)>=kasFrom && (m.tanggal||'').slice(0,10)<=kasTo).reduce((s,m)=>s+Number(m.jumlah),0);
-  const keluarPeriode = KAS_DATA.mutasi.filter(m=>m.arah==='keluar' && (m.tanggal||'').slice(0,10)>=kasFrom && (m.tanggal||'').slice(0,10)<=kasTo).reduce((s,m)=>s+Number(m.jumlah),0);
-
-  return { modalAwal, totalSaldoKas, totalNilaiStok, totalLaba, modalSaatIni, totalPiutang, masukPeriode, keluarPeriode };
+  const r = KAS_DATA.ringkasan || {};
+  const p = KAS_DATA.periode || {};
+  return {
+    modalAwal: Number(r.modal_awal||0),
+    totalSaldoKas: Number(r.total_saldo_kas||0),
+    totalNilaiStok: Number(r.total_nilai_stok||0),
+    totalLaba: Number(r.total_laba||0),
+    totalPiutang: Number(r.total_piutang||0),
+    modalSaatIni: Number(r.modal_saat_ini||0),
+    masukPeriode: Number(p.masuk_periode||0),
+    keluarPeriode: Number(p.keluar_periode||0)
+  };
 }
 function hitungLaba(){
-  // PENTING: tabel transaksi_toko TIDAK punya kolom "tanggal" — kolom tanggalnya bernama
-  // created_at (persis seperti cara Aplikasi Kasir Toko sendiri membaca tabel ini, lihat
-  // mapTransaksiTokoDariSupabase/mapTransaksiItemDariSupabase di app Toko). Buang transaksi
-  // yang dibatalkan — supaya periode & filter batal selalu selaras dengan Laporan di app Toko.
-  const transaksiPeriode = KAS_DATA.transaksiToko.filter(t=>!t.dibatalkan && (t.created_at||'').slice(0,10)>=kasFrom && (t.created_at||'').slice(0,10)<=kasTo);
-  const omzet = transaksiPeriode.reduce((s,t)=>s+Number(t.total),0);
-  const labaTunai = transaksiPeriode.filter(t=>t.metode==='Tunai'||t.metode==='Saldo').reduce((s,t)=>s+labaKotorTransaksi(t),0);
-  const labaKredit = transaksiPeriode.filter(t=>t.metode==='Hutang').reduce((s,t)=>s+labaKotorTransaksi(t),0);
-  const totalLaba = labaTunai + labaKredit;
-  const operasional = KAS_DATA.mutasi.filter(m=>m.kategori==='operasional' && m.arah==='keluar' && (m.tanggal||'').slice(0,10)>=kasFrom && (m.tanggal||'').slice(0,10)<=kasTo).reduce((s,m)=>s+Number(m.jumlah),0);
-  const labaBersih = totalLaba - operasional;
-  return { omzet, labaTunai, labaKredit, totalLaba, operasional, labaBersih };
+  const p = KAS_DATA.periode || {};
+  return {
+    omzet: Number(p.omzet||0),
+    labaTunai: Number(p.laba_tunai||0),
+    labaKredit: Number(p.laba_kredit||0),
+    totalLaba: Number(p.total_laba||0),
+    operasional: Number(p.operasional||0),
+    labaBersih: Number(p.laba_bersih||0)
+  };
 }
 function renderKasPage(){
   if(!kasFrom){ kasFrom = geserTanggalStr(todayStr(), {hari:-30}); }
@@ -2114,7 +2110,13 @@ let tagihanSubTab = 'tagihan'; // 'tagihan' | 'iuran'
 let TAGIHAN_DATA = null;
 const NAMA_BULAN = ['Januari','Februari','Maret','April','Mei','Juni','Juli','Agustus','September','Oktober','November','Desember'];
 
-async function loadTagihanData(){
+// force=true dipakai oleh tombol Refresh utama. Tanpa force, kalau TAGIHAN_DATA sudah pernah
+// dimuat, pakai yang sudah ada di memori saja -- sebelumnya halaman ini fetch ulang ke Supabase
+// setiap kali pindah sub-tab Tagihan<->Iuran atau buka Laporan Keuangan, padahal datanya sama.
+async function loadTagihanData(force){
+  if(!force && TAGIHAN_DATA && TAGIHAN_DATA!=='error'){
+    return;
+  }
   try {
     const [tagihanRes, jenisRes, iuranRes, iuranDetailRes, saldoSantriRes] = await Promise.all([
       sb.from('tagihan').select('jenis_tagihan_id, bulan, status, santri_id, jumlah, jatuh_tempo'),
