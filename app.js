@@ -1562,7 +1562,7 @@ function openCardSantri(santriId){
         <div class="head"><div class="head-logo" style="width:38px;height:38px;overflow:hidden;border-radius:50%"><img src="icon-192.png" width="38" height="38" style="width:38px;height:38px;object-fit:cover;display:block;border-radius:50%"></div><div class="pn">KARTU SANTRI &middot; PPRQ SENTOL</div></div>
         <div class="body">
           <div class="left">
-            ${s.foto?`<img class="photo" src="${s.foto}">`:`<div class="photo"></div>`}
+            ${(s.fotoThumb||s.foto)?`<img class="photo" src="${s.fotoThumb||s.foto}">`:`<div class="photo"></div>`}
             <div class="info">
               <div class="nm">${escapeHtml(s.nama)}</div>
               <div>No. Induk: <b>${escapeHtml(s.noInduk)}</b></div>
@@ -1597,7 +1597,7 @@ function openCardWali(santriId){
         <div class="head"><div class="head-logo" style="width:38px;height:38px;overflow:hidden;border-radius:50%"><img src="icon-192.png" width="38" height="38" style="width:38px;height:38px;object-fit:cover;display:block;border-radius:50%"></div><div class="pn">KARTU WALI SANTRI &middot; PPRQ SENTOL</div></div>
         <div class="body">
           <div class="left">
-            ${s.fotoWali?`<img class="photo" src="${s.fotoWali}">`:`<div class="photo photo-placeholder">&#128100;</div>`}
+            ${(s.fotoWaliThumb||s.fotoWali)?`<img class="photo" src="${s.fotoWaliThumb||s.fotoWali}">`:`<div class="photo photo-placeholder">&#128100;</div>`}
             <div class="info">
               <div class="nm">${escapeHtml(s.namaWali)}</div>
               <div>Wali dari: <b>${escapeHtml(s.nama)}</b></div>
@@ -1627,7 +1627,7 @@ function openCardMahram(santriId, idx){
         <div class="head"><div class="head-logo" style="width:38px;height:38px;overflow:hidden;border-radius:50%"><img src="icon-192.png" width="38" height="38" style="width:38px;height:38px;object-fit:cover;display:block;border-radius:50%"></div><div class="pn">KARTU MAHRAM &middot; PPRQ SENTOL</div></div>
         <div class="body">
           <div class="left">
-            ${m.foto?`<img class="photo" src="${m.foto}">`:`<div class="photo"></div>`}
+            ${(m.fotoThumb||m.foto)?`<img class="photo" src="${m.fotoThumb||m.foto}">`:`<div class="photo"></div>`}
             <div class="info">
               <div class="nm">${escapeHtml(m.nama)}</div>
               <div>Hubungan: ${escapeHtml(m.hubungan)}</div>
