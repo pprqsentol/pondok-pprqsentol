@@ -61,7 +61,7 @@ const MAHRAM_SELECT_COLS = 'id, santri_id, nama, hubungan, no_hp, foto_url, foto
    bisa dipakai delta sync (lihat bagian 3c). */
 const KEGIATAN_SELECT_COLS = 'id, nama, program_khusus, aktif, updated_at';
 const ABSENSI_SELECT_COLS = 'id, santri_id, kegiatan_id, tanggal, status, updated_at';
-const HAFALAN_SELECT_COLS = 'id, santri_id, tanggal, juz, halaman_dari, halaman_sampai, kegiatan_id, updated_at';
+const HAFALAN_SELECT_COLS = 'id, santri_id, tanggal, juz, halaman_dari, halaman_sampai, kegiatan_id, keterangan, updated_at';
 const MUROJAAH_SELECT_COLS = 'id, santri_id, kegiatan_id, tanggal, juz, cakupan, updated_at';
 const IDAD_SELECT_COLS = 'id, santri_id, kegiatan_id, tanggal, metode, catatan, updated_at';
 const TES_JUZ_SELECT_COLS = 'id, santri_id, juz_selesai, kategori, syarat_juz, tanggal_mulai, batas_hari, status, tanggal_lulus, dicatat_oleh, catatan, wali_hadir, updated_at';
@@ -185,7 +185,22 @@ function juzSekarang(santriId){
     return { juz: posisi.juz, halaman: posisi.halaman, mulai: false, adaData: true };
   }
   const last = items[items.length-1];
+  if(last.keterangan === 'Ulang'){
+    return {
+      juz: last.juz, halaman: Math.max(0, (last.halamanDari||1) - 1),
+      mulai: false, adaData: true, tanggal: last.tanggal,
+      perluUlang: true, ulangDari: last.halamanDari, ulangSampai: last.halamanSampai
+    };
+  }
   if((last.halamanSampai||0) >= 20){
+    /* Juz baru saja tuntas. Sebelum boleh lanjut ke juz berikutnya, santri harus
+       lulus Tes Kenaikan Juz dulu (dibuat otomatis oleh Aplikasi Pembina saat
+       juz ini pertama kali tuntas). Selama masih 'menunggu', JANGAN maju ke
+       juz berikutnya -- SAMA PERSIS dengan Aplikasi Pembina. */
+    const tesPending = DB.tesKenaikanJuz.find(t=>t.santriId===santriId && t.status==='menunggu' && t.juzSelesai===last.juz);
+    if(tesPending){
+      return { juz: last.juz, halaman: 20, mulai: false, adaData: true, tanggal: last.tanggal, tesPending };
+    }
     return { juz: juzSetelah(last.juz), halaman: 0, mulai: true, adaData: true, tanggal: last.tanggal };
   }
   return { juz: last.juz, halaman: last.halamanSampai||0, mulai: false, adaData: true, tanggal: last.tanggal };
@@ -194,6 +209,8 @@ function formatJuzSekarang(santriId){
   const c = juzSekarang(santriId);
   if(c.khatam) return `Sudah khatam 30 juz`;
   if(!c.adaData) return `Belum mulai (dimulai dari Juz ${c.juz})`;
+  if(c.perluUlang) return `Juz ${c.juz}, halaman ${c.ulangDari}${c.ulangSampai>c.ulangDari?'-'+c.ulangSampai:''} (diulang, belum lancar)`;
+  if(c.tesPending) return `Juz ${c.juz} selesai &mdash; menunggu Tes Kenaikan Juz`;
   if(c.mulai) return `Juz sebelumnya selesai, giliran Juz ${c.juz} (belum ada input)`;
   return `Juz ${c.juz}, halaman ${c.halaman}`;
 }
@@ -264,7 +281,7 @@ function hafalanRowToApp(h) {
     id: h.id, santriId: h.santri_id, tanggal: h.tanggal, juz: h.juz,
     halamanDari: h.halaman_dari, halamanSampai: h.halaman_sampai,
     jumlahHalaman: h.halaman_sampai - h.halaman_dari + 1,
-    kegiatanId: h.kegiatan_id || null
+    kegiatanId: h.kegiatan_id || null, keterangan: h.keterangan || ''
   };
 }
 function murojaahRowToApp(m) {
@@ -387,6 +404,25 @@ const DELTA_TABLES = [
 // akhirnya kebawa ke cache lokal walau delta sync sendiri tidak bisa mendeteksi delete.
 const FULL_RELOAD_INTERVAL_MS = 24 * 60 * 60 * 1000; // 24 jam
 
+/* Cek jumlah baris suatu tabel di server TANPA menarik isi barisnya (select
+   dengan head:true, count:'exact' -- PostgREST cuma balas angka di header
+   response, badan datanya ~0 byte). Dipakai fullReload() di bawah supaya
+   tabel riwayat yang sudah cocok jumlahnya dengan cache lokal tidak perlu
+   didownload ulang penuh tiap 24 jam -- SAMA PERSIS dengan optimisasi yang
+   sudah ada di Aplikasi Pembina (hitungBarisServer). Kalau gagal (mis. lagi
+   tidak ada koneksi), balikin null supaya caller tetap full-download seperti
+   biasa (aman, cuma tidak hemat egress hari itu). */
+async function hitungBarisServer(table){
+  try{
+    const { count, error } = await sb.from(table).select('id', { count: 'exact', head: true });
+    if(error) throw error;
+    return count;
+  }catch(e){
+    console.warn('Gagal hitung jumlah baris server untuk '+table+' (lanjut full download seperti biasa):', e);
+    return null;
+  }
+}
+
 async function loadAll(opsi) {
   opsi = opsi || {};
   const cadangan = opsi.paksaFull ? null : await idbLoad();
@@ -415,20 +451,35 @@ async function loadAll(opsi) {
 
 /* Ambil SEMUA data (dipakai saat cache kosong, atau tiap 24 jam sekali sebagai
    penyelaras penuh). Sama seperti loadAll() versi lama, hanya dipecah jadi fungsi
-   sendiri supaya bisa dipanggil terpisah dari delta sync. */
+   sendiri supaya bisa dipanggil terpisah dari delta sync.
+   Tabel master (kegiatan/santri/mahram/pembina) selalu diambil penuh -- jumlah
+   barisnya kecil (puluhan), jadi egress-nya kecil. Tabel RIWAYAT (absensi/hafalan/
+   dst, lihat DELTA_TABLES) dicek dulu jumlah barisnya di server (hitungBarisServer,
+   ~0 byte) -- kalau SAMA dengan yang sudah ada di cache lokal, full download tabel
+   itu DILEWATI (isi baris yang berubah sudah tertangkap delta sync harian biasa,
+   yang dicek di sini cuma penambahan/penghapusan net). Ini penting karena tabel
+   riwayat terus bertambah setiap hari tanpa batas -- tanpa pengecekan ini,
+   fullReload() akan menarik ulang SELURUH riwayat dari awal berdirinya pondok
+   setiap 24 jam, selamanya. */
 async function fullReload() {
   const mulai = new Date().toISOString(); // checkpoint delta sync berikutnya dimulai dari sini
-  const [kegiatanRes, santriRes, mahramRes, absensiRes, hafalanRes, murojaahRes, idadRes, tesJuzRes, saldoRes, pembinaRes] = await Promise.all([
+
+  const jumlahServer = await Promise.all(
+    DELTA_TABLES.map(t => DB[t.key].length > 0 ? hitungBarisServer(t.table) : Promise.resolve(null))
+  );
+  const perluFull = DELTA_TABLES.map((t, i) => {
+    const count = jumlahServer[i];
+    // Full download tetap dilakukan kalau: cache lokal masih kosong (login pertama
+    // kali), count gagal dihitung (count===null), atau jumlahnya beda dari cache.
+    return !(DB[t.key].length > 0 && count !== null && count === DB[t.key].length);
+  });
+
+  const [kegiatanRes, santriRes, mahramRes, pembinaRes, ...riwayatRes] = await Promise.all([
     sb.from('kegiatan').select(KEGIATAN_SELECT_COLS).eq('aktif', true).order('nama'),
     sb.from('santri').select(SANTRI_SELECT_COLS).eq('aktif', true).order('nama'),
     sb.from('mahram').select(MAHRAM_SELECT_COLS),
-    sb.from('absensi').select(ABSENSI_SELECT_COLS),
-    sb.from('hafalan').select(HAFALAN_SELECT_COLS),
-    sb.from('murojaah').select(MUROJAAH_SELECT_COLS),
-    sb.from('idad').select(IDAD_SELECT_COLS),
-    sb.from('tes_kenaikan_juz').select(TES_JUZ_SELECT_COLS),
-    sb.from('transaksi_saldo').select(TRANSAKSI_SALDO_SELECT_COLS),
-    sb.from('pembina').select(PEMBINA_SELECT_COLS).order('nama')
+    sb.from('pembina').select(PEMBINA_SELECT_COLS).order('nama'),
+    ...DELTA_TABLES.map((t, i) => perluFull[i] ? sb.from(t.table).select(t.cols) : Promise.resolve(null))
   ]);
   if(kegiatanRes.error) throw kegiatanRes.error;
   const santri = (santriRes.data || []).map(santriRowToApp);
@@ -439,14 +490,13 @@ async function fullReload() {
   DB = {
     kegiatan: (kegiatanRes.data || []).map(kegiatanRowToApp),
     santri,
-    absensi: (absensiRes.data || []).map(absensiRowToApp),
-    hafalan: (hafalanRes.data || []).map(hafalanRowToApp),
-    murojaah: (murojaahRes && !murojaahRes.error) ? (murojaahRes.data || []).map(murojaahRowToApp) : [],
-    idad: (idadRes && !idadRes.error) ? (idadRes.data || []).map(idadRowToApp) : [],
-    tesKenaikanJuz: (tesJuzRes && !tesJuzRes.error) ? (tesJuzRes.data || []).map(tesJuzRowToApp) : [],
-    transaksiSaldo: (saldoRes.data || []).map(transaksiSaldoRowToApp),
     pembina: (pembinaRes.data || []).map(pembinaRowToApp)
   };
+  DELTA_TABLES.forEach((t, i) => {
+    if (!perluFull[i]) { DB[t.key] = DB[t.key] || []; return; } // jumlah baris cocok -> pakai cache lama apa adanya
+    const res = riwayatRes[i];
+    DB[t.key] = (res && !res.error) ? (res.data || []).map(t.map) : [];
+  });
   idbSave(DB);
   const tables = {};
   DELTA_TABLES.forEach(t => { tables[t.key] = mulai; });
@@ -1031,12 +1081,16 @@ async function readImageTo(input, hiddenId){
     // Preview langsung pakai foto ukuran sedang, tidak perlu menunggu upload selesai.
     if(prev){ prev.src = URL.createObjectURL(medium.blob); prev.style.display = 'block'; }
     const rand = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    /* cacheControl 1 tahun -- AMAN karena nama file selalu baru (timestamp+random,
+       upsert:false, tidak pernah ditimpa), jadi browser/CDN boleh simpan sangat
+       lama tanpa risiko menampilkan foto basi. Menekan egress Storage untuk
+       kunjungan berulang ke foto yang sama (avatar, kartu santri, dsb). */
     const [medRes, thumbRes] = await Promise.all([
       sb.storage.from('foto-santri').upload(`${hiddenId}_${rand}.${medium.ext}`, medium.blob, {
-        contentType: medium.contentType, upsert: false
+        contentType: medium.contentType, upsert: false, cacheControl: '31536000'
       }),
       sb.storage.from('foto-santri').upload(`${hiddenId}_${rand}_thumb.${thumb.ext}`, thumb.blob, {
-        contentType: thumb.contentType, upsert: false
+        contentType: thumb.contentType, upsert: false, cacheControl: '31536000'
       })
     ]);
     if(medRes.error){ alert('Gagal mengunggah foto: ' + medRes.error.message); return; }
@@ -1109,8 +1163,8 @@ async function backfillThumbnailFotoLama(){
       URL.revokeObjectURL(objUrl);
       const rand = `backfill_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
       const [medRes, thumbRes] = await Promise.all([
-        sb.storage.from('foto-santri').upload(`${rand}.${medium.ext}`, medium.blob, { contentType: medium.contentType, upsert: false }),
-        sb.storage.from('foto-santri').upload(`${rand}_thumb.${thumb.ext}`, thumb.blob, { contentType: thumb.contentType, upsert: false })
+        sb.storage.from('foto-santri').upload(`${rand}.${medium.ext}`, medium.blob, { contentType: medium.contentType, upsert: false, cacheControl: '31536000' }),
+        sb.storage.from('foto-santri').upload(`${rand}_thumb.${thumb.ext}`, thumb.blob, { contentType: thumb.contentType, upsert: false, cacheControl: '31536000' })
       ]);
       if(medRes.error) throw medRes.error;
       if(thumbRes.error) throw thumbRes.error;
