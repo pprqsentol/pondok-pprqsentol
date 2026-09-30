@@ -92,23 +92,51 @@ function santriAppToRow(s) {
     hafalan_awal: s.hafalanAwal || 0
   };
 }
-/* Total hafalan berjalan = hafalan awal (sebelum pakai aplikasi, sudah dikonversi ke posisi
-   urutan hafalan lewat pagesFromJuzAwal) + seluruh hafalan yang diinput lewat aplikasi.
-   1 juz = 20 halaman (hitungan internal pondok). Hasil "juz" di sini adalah JUMLAH juz yang
-   sudah dihafal (mengikuti urutan 29,30,1,2,...,28), BUKAN nomor juz yang sedang dihafal. */
-function totalHafalanSantri(santriId){
+/* Total hafalan berjalan = POSISI terjauh yang sudah dicapai santri, dalam halaman kumulatif
+   mengikuti urutan juz pondok (29, 30, 1, 2, ... 28), 1 juz = 20 halaman. Contoh: Juz 29 hal. 17 = 17.
+   Hasil "juz" di sini adalah JUMLAH juz yang sudah dihafal, BUKAN nomor juz yang sedang dihafal.
+   BUKAN menjumlahkan halaman dari setiap baris setoran: baris "Ulang", setoran ganda, dan
+   setoran lanjutan di halaman yang sama (Setoran 1 + Bin Nadhor) akan terhitung berkali-kali.
+   hafalan_awal dipakai sebagai batas bawah (halaman yang sudah dihafal sebelum pakai aplikasi). */
+function posisiHalaman(h){
+  const p = posisiJuz(h.juz);
+  return p < 1 ? 0 : (p-1)*20 + (h.halamanSampai||0);
+}
+function hafalanAwalSantri(santriId){
   const s = DB.santri.find(x=>x.id===santriId);
-  const awal = s ? (s.hafalanAwal||0) : 0;
-  const tambahan = DB.hafalan.filter(h=>h.santriId===santriId).reduce((sum,h)=>sum+(h.jumlahHalaman||1),0);
-  const total = awal + tambahan;
+  return s ? (s.hafalanAwal||0) : 0;
+}
+// Posisi santri TEPAT SEBELUM tanggal `dari` (titik nol untuk hitungan "tambahan di periode").
+function posisiSebelum(santriId, dari){
+  let maks = hafalanAwalSantri(santriId);
+  DB.hafalan.forEach(h=>{ if(h.santriId===santriId && h.tanggal<dari) maks = Math.max(maks, posisiHalaman(h)); });
+  return maks;
+}
+// Halaman yang BENAR-BENAR bertambah di periode: posisi akhir periode - posisi sebelum periode.
+function tambahanPeriode(santriId, from, to){
+  let akhir = 0, ada = false;
+  DB.hafalan.forEach(h=>{
+    if(h.santriId===santriId && h.tanggal>=from && h.tanggal<=to){ ada = true; akhir = Math.max(akhir, posisiHalaman(h)); }
+  });
+  return ada ? Math.max(0, akhir - posisiSebelum(santriId, from)) : 0;
+}
+function totalHafalanSantri(santriId){
+  let total = hafalanAwalSantri(santriId);
+  DB.hafalan.forEach(h=>{ if(h.santriId===santriId) total = Math.max(total, posisiHalaman(h)); });
   return { total, juz: Math.floor(total/20), halaman: total%20 };
 }
 
 /* ====== TARGET RAPOR ======
-   Target minimal halaman hafalan bertambah per hari (dipakai untuk menghitung
+   Target minimal halaman hafalan bertambah per bulan (dipakai untuk menghitung
    predikat A-E kategori Hafalan di tab Rapor). Ubah angka ini saja kalau mau
    mengubah standar penilaian pondok. */
-const TARGET_HAFALAN_PER_HARI = 1;
+const TARGET_HAFALAN_PER_BULAN = 20; // halaman
+// Target periode: 20 halaman per bulan. Periode 28-31 hari dianggap 1 bulan penuh (=20 halaman),
+// di luar itu dihitung proporsional (20 halaman per 30 hari), minimal 1 halaman.
+function targetHafalanPeriode(hari){
+  const bulan = (hari >= 28 && hari <= 31) ? 1 : hari/30;
+  return Math.max(1, Math.round(bulan * TARGET_HAFALAN_PER_BULAN));
+}
 function hariDalamPeriode(from, to){
   const a = new Date(from), b = new Date(to);
   return Math.max(1, Math.round((b-a)/86400000) + 1);
@@ -122,10 +150,9 @@ function predikatLabel(huruf){
   return {A:'Sangat Baik', B:'Baik', C:'Cukup Baik', D:'Kurang Baik', E:'Kurang'}[huruf] || '-';
 }
 function nilaiHafalanSantri(santriId, from, to){
-  const tambahan = DB.hafalan.filter(h=>h.santriId===santriId && h.tanggal>=from && h.tanggal<=to)
-    .reduce((sum,h)=>sum+(h.jumlahHalaman||1),0);
+  const tambahan = tambahanPeriode(santriId, from, to);
   const hari = hariDalamPeriode(from, to);
-  const target = hari * TARGET_HAFALAN_PER_HARI;
+  const target = targetHafalanPeriode(hari);
   const pct = target>0 ? Math.min(100, Math.round(tambahan/target*100)) : 0;
   return { tambahan, target, hari, pct, predikat: predikatFromPct(pct) };
 }
@@ -1385,7 +1412,7 @@ function renderRiwayatSantri(santriId){
   const absensi = DB.absensi.filter(a=>a.santriId===santriId && a.tanggal>=from && a.tanggal<=to).sort((a,b)=>b.tanggal.localeCompare(a.tanggal));
   const statusLabel = {h:'Hadir', a:'Alpha', i:'Izin'};
   const namaKegiatan = kid => (DB.kegiatan.find(k=>k.id===kid)||{}).nama || '-';
-  const totalPeriode = hafalan.reduce((sum,h)=>sum+(h.jumlahHalaman||1),0);
+  const totalPeriode = tambahanPeriode(santriId, from, to);
   const isIdad = s && s.program === 'Idad';
   const na = nilaiAbsensiSantri(santriId, from, to);
 
@@ -1484,11 +1511,11 @@ function renderRiwayatSantri(santriId){
       ${keuangan.map(t=>`<tr><td>${t.tanggal}</td><td>${t.jenis}</td><td>${t.nominal}</td><td>${escapeHtml(t.keterangan)}</td></tr>`).join('')}
       </table></div>`}
   `;
-  drawSantriHafalanChart(hafalan);
+  drawSantriHafalanChart(hafalan, posisiSebelum(santriId, from));
   drawSantriAbsensiChart(santriId, from, to);
 }
 /* Grafik tren hafalan (kumulatif) untuk satu santri di halaman detail. */
-function drawSantriHafalanChart(hafalanItems){
+function drawSantriHafalanChart(hafalanItems, posisiAwalPeriode){
   const canvas = document.getElementById('chartSantriHafalan');
   if(!canvas) return;
   const ctx = canvas.getContext('2d');
@@ -1496,8 +1523,10 @@ function drawSantriHafalanChart(hafalanItems){
   ctx.clearRect(0,0,W,H);
   const items = hafalanItems.slice().sort((a,b)=>a.tanggal.localeCompare(b.tanggal));
   if(items.length<2){ ctx.fillStyle='#888'; ctx.font='12px sans-serif'; ctx.fillText('Belum cukup data untuk grafik.', 10, H/2); return; }
-  let cum = 0;
-  const series = items.map(h=>{ cum += (h.jumlahHalaman||1); return { t:h.tanggal, v:cum }; });
+  // Kumulatif = posisi terjauh sampai tanggal itu dikurangi posisi sebelum periode (tidak naik
+  // kalau santri cuma mengulang halaman yang sama).
+  let maks = posisiAwalPeriode||0;
+  const series = items.map(h=>{ maks = Math.max(maks, posisiHalaman(h)); return { t:h.tanggal, v:maks-(posisiAwalPeriode||0) }; });
   const maxV = Math.max(1, ...series.map(p=>p.v));
   ctx.strokeStyle='#ddd'; ctx.beginPath(); ctx.moveTo(pad,H-pad); ctx.lineTo(W-10,H-pad); ctx.stroke();
   ctx.strokeStyle='#3b5940'; ctx.lineWidth=2; ctx.beginPath();
@@ -1786,11 +1815,23 @@ function renderLaporanTesJuz(santri){
     </div>
   `;
 }
+/* Laporan Hafalan: "Total ditambah" = jumlah halaman dari setoran kegiatan "Setoran 1"
+   yang berstatus Lancar (bukan "Ulang") pada periode terpilih. Setoran Bin Nadhor,
+   Murojaah, dan setoran yang diulang tidak dihitung. */
+function setoran1Lancar(h){
+  const nama = String(((DB.kegiatan.find(k=>k.id===h.kegiatanId))||{}).nama || '').trim().toLowerCase();
+  return nama === 'setoran 1' && h.keterangan !== 'Ulang';
+}
+function hafalanLaporanSantri(santriId){
+  const items = DB.hafalan.filter(h=>h.santriId===santriId && h.tanggal>=lapFrom && h.tanggal<=lapTo).sort((a,b)=>a.tanggal.localeCompare(b.tanggal));
+  const lancar = items.filter(setoran1Lancar);
+  const tambah = lancar.reduce((sum,h)=>sum+(h.jumlahHalaman||1),0);
+  return { items, lancar, tambah };
+}
 function renderLaporanHafalan(santri){
   const rows = santri.map(s=>{
-    const items = DB.hafalan.filter(h=>h.santriId===s.id && h.tanggal>=lapFrom && h.tanggal<=lapTo).sort((a,b)=>a.tanggal.localeCompare(b.tanggal));
-    const tambah = items.reduce((sum,h)=>sum+(h.jumlahHalaman||1),0);
-    return {s, items, tambah};
+    const { items, lancar, tambah } = hafalanLaporanSantri(s.id);
+    return {s, items, lancar, tambah};
   });
   document.getElementById('lapBody').innerHTML = `
     <div class="btn-row" style="margin-bottom:10px">
@@ -1799,6 +1840,7 @@ function renderLaporanHafalan(santri){
     </div>
     <div class="card">
       <div class="card-title">Total halaman ditambah per santri (periode terpilih)</div>
+      <p class="muted" style="margin:0 0 8px;font-size:12px">Total ditambah = jumlah halaman dari Setoran 1 yang berstatus Lancar pada periode ini.</p>
       <div class="table-wrap"><table><tr><th>Santri</th><th>Jumlah sesi</th><th>Total ditambah</th></tr>
       ${rows.map(r=>`<tr><td>${escapeHtml(r.s.nama)}</td><td>${r.items.length}</td><td><b>${r.tambah}</b> hal.</td></tr>`).join('')}
       </table></div>
@@ -1813,8 +1855,7 @@ function renderLaporanHafalan(santri){
 function hafalanExportRows(){
   const santri = visibleSantriUntukLaporan();
   return santri.map((s,i)=>{
-    const items = DB.hafalan.filter(h=>h.santriId===s.id && h.tanggal>=lapFrom && h.tanggal<=lapTo);
-    const tambah = items.reduce((sum,h)=>sum+(h.jumlahHalaman||1),0);
+    const { items, tambah } = hafalanLaporanSantri(s.id);
     return { 'No': i+1, 'Nama': s.nama, 'No. Induk': s.noInduk, 'Program': programLabel(s.program), 'Jumlah Sesi': items.length, 'Total Halaman Ditambah': tambah, 'Periode': `${lapFrom} s.d. ${lapTo}` };
   });
 }
@@ -1868,7 +1909,7 @@ function drawTrendChart(rows){
   const colors = ['#3b5940','#c0392b','#d19a24','#2f7d9d','#8a4baf','#c2669b'];
   const allSeries = rows.map(r=>{
     let cum = 0;
-    return r.items.map(h=>{ cum += (h.jumlahHalaman||1); return {t:h.tanggal, v:cum}; });
+    return (r.lancar||r.items).map(h=>{ cum += (h.jumlahHalaman||1); return {t:h.tanggal, v:cum}; });
   });
   const maxV = Math.max(1, ...allSeries.flat().map(p=>p.v));
   const allDates = [...new Set(allSeries.flat().map(p=>p.t))].sort();
@@ -2671,7 +2712,7 @@ function renderRaporPage(){
         </select>
         <button class="btn btn-sm btn-accent" title="Mengunduh rekap SEMUA santri, tidak terpengaruh pencarian/filter di atas" onclick="exportRaporExcel()">&#128190; Unduh Excel</button>
       </div>
-      <p class="muted" style="margin:6px 2px 0;font-size:11px">Target hafalan: ${TARGET_HAFALAN_PER_HARI} halaman/hari &middot; Predikat: A&ge;90%, B&ge;75%, C&ge;60%, D&ge;40%, E&lt;40%</p>
+      <p class="muted" style="margin:6px 2px 0;font-size:11px">Target hafalan: ${TARGET_HAFALAN_PER_BULAN} halaman/bulan &middot; Predikat: A&ge;90%, B&ge;75%, C&ge;60%, D&ge;40%, E&lt;40%</p>
     </div>
     <div id="raporBody"></div>
   `;
