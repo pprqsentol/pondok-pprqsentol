@@ -1,4 +1,4 @@
-const CACHE = 'pondok-rq-v27-rpc-kas';
+const CACHE = 'pondok-rq-v29-total-posisi';
 const FILES = [
   './',
   './index.html',

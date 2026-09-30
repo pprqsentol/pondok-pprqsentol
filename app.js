@@ -92,11 +92,22 @@ function santriAppToRow(s) {
     hafalan_awal: s.hafalanAwal || 0
   };
 }
-/* Total hafalan berjalan = hafalan awal + halaman UNIK yang sudah disetor lewat kegiatan "Setoran 1"
+/* Total hafalan berjalan = POSISI halaman tertinggi yang sudah disetor lewat kegiatan "Setoran 1"
+   berstatus Lancar (minimal hafalan awal) -- lihat posisiSampai(). Keterangan lama di bawah ini
+   tentang "halaman unik" sudah TIDAK dipakai. Dulu:  hafalan awal + halaman UNIK yang sudah disetor lewat kegiatan "Setoran 1"
    berstatus Lancar (urutan halaman mengikuti urutan juz pondok: 29, 30, 1, ... 28; 1 juz = 20 halaman).
    "Setoran Bin Nadhor", setoran berstatus Ulang, dan Murojaah TIDAK dihitung. Halaman yang sama yang
    disetor berkali-kali hanya dihitung sekali. Hasil "juz" = JUMLAH juz yang sudah dihafal, BUKAN nomor
    juz yang sedang dihafal. hafalan_awal = halaman yang sudah dihafal sebelum pakai aplikasi. */
+/* Apakah baris hafalan ini dari kegiatan "Setoran 1" (apa pun keterangannya, Lancar/Ulang).
+   Setoran Bin Nadhor cuma persiapan malam untuk besok disetorkan di Setoran 1, jadi
+   TIDAK BOLEH mempengaruhi posisi halaman berikutnya, pembuatan Tes Kenaikan Juz,
+   maupun total hafalan. Yang menentukan posisi hanya Setoran 1. */
+function setoran1(h){
+  const daftar = (DB.kegiatanSemua && DB.kegiatanSemua.length) ? DB.kegiatanSemua : DB.kegiatan;
+  const nama = String(((daftar||[]).find(k=>k.id===h.kegiatanId)||{}).nama || '').trim().toLowerCase();
+  return nama === 'setoran 1';
+}
 function setoran1Lancar(h){
   const daftar = (DB.kegiatanSemua && DB.kegiatanSemua.length) ? DB.kegiatanSemua : DB.kegiatan;
   const nama = String(((daftar||[]).find(k=>k.id===h.kegiatanId)||{}).nama || '').trim().toLowerCase();
@@ -123,19 +134,27 @@ function kumpulHalaman(santriId, pilihTanggal){
   });
   return set;
 }
-// Halaman yang BENAR-BENAR baru di periode: belum pernah disetor Setoran 1 Lancar sebelum periode dan di atas hafalan_awal.
+/* POSISI hafalan = nomor halaman kumulatif TERTINGGI dari Setoran 1 Lancar (minimal hafalan_awal),
+   pada tanggal yang lolos `pilihTanggal`. Hafalan disetor berurutan, jadi halaman 19 berarti 19
+   halaman sudah selesai -- tidak peduli ada halaman di tengah yang tidak tercatat baris Setoran 1-nya.
+   Setoran Bin Nadhor, Ulang, dan Murojaah TIDAK dihitung. */
+function posisiSampai(santriId, pilihTanggal){
+  let max = hafalanAwalSantri(santriId);
+  DB.hafalan.forEach(h=>{
+    if(h.santriId===santriId && setoran1Lancar(h) && pilihTanggal(h.tanggal)){
+      halamanMutlak(h).forEach(x=>{ if(x>max) max = x; });
+    }
+  });
+  return max;
+}
+// Halaman yang bertambah di periode = posisi di akhir periode dikurangi posisi sebelum periode.
 function tambahanPeriode(santriId, from, to){
-  const awal = hafalanAwalSantri(santriId);
-  const sebelum = kumpulHalaman(santriId, t=>t<from);
-  let n = 0;
-  kumpulHalaman(santriId, t=>t>=from && t<=to).forEach(x=>{ if(x>awal && !sebelum.has(x)) n++; });
-  return n;
+  const sebelum = posisiSampai(santriId, t=>t<from);
+  const sampai = posisiSampai(santriId, t=>t<=to);
+  return Math.max(0, sampai - sebelum);
 }
 function totalHafalanSantri(santriId){
-  const awal = hafalanAwalSantri(santriId);
-  let n = 0;
-  kumpulHalaman(santriId, ()=>true).forEach(x=>{ if(x>awal) n++; });
-  const total = awal + n;
+  const total = posisiSampai(santriId, ()=>true);
   return { total, juz: Math.floor(total/20), halaman: total%20 };
 }
 
@@ -211,7 +230,8 @@ function juzAwalFromPages(totalPages){
    posisi dimulai dari hafalan_awal (dikonversi lewat juzAwalFromPages) -- bukan selalu
    dianggap "belum mulai dari Juz 29" walau santri itu sudah punya hafalan awal besar. */
 function juzSekarang(santriId){
-  const items = DB.hafalan.filter(h=>h.santriId===santriId)
+  /* Hanya Setoran 1 yang menentukan posisi. Setoran Bin Nadhor DIABAIKAN. */
+  const items = DB.hafalan.filter(h=>h.santriId===santriId && setoran1(h))
     .slice().sort((a,b)=> a.tanggal===b.tanggal ? String(a.id).localeCompare(String(b.id)) : a.tanggal.localeCompare(b.tanggal));
   if(items.length===0){
     const s = DB.santri.find(x=>x.id===santriId);
@@ -1536,14 +1556,13 @@ function drawSantriHafalanChart(hafalanItems, santriId, from){
   ctx.clearRect(0,0,W,H);
   const items = hafalanItems.filter(setoran1Lancar).sort((a,b)=>a.tanggal.localeCompare(b.tanggal));
   if(items.length<2){ ctx.fillStyle='#888'; ctx.font='12px sans-serif'; ctx.fillText('Belum cukup data untuk grafik.', 10, H/2); return; }
-  // Kumulatif = halaman baru (unik) dari Setoran 1 Lancar sejak awal periode; tidak naik kalau
-  // halaman yang sama disetor lagi.
-  const awal = hafalanAwalSantri(santriId);
-  const terlihat = kumpulHalaman(santriId, t=>t<from);
-  let cum = 0;
+  // Kumulatif = kenaikan posisi (halaman tertinggi Setoran 1 Lancar) sejak awal periode; tidak naik
+  // kalau halaman yang sama / lebih rendah disetor lagi.
+  const dasar = posisiSampai(santriId, t=>t<from);
+  let posisi = dasar;
   const series = items.map(h=>{
-    halamanMutlak(h).forEach(x=>{ if(x>awal && !terlihat.has(x)){ terlihat.add(x); cum++; } });
-    return { t:h.tanggal, v:cum };
+    halamanMutlak(h).forEach(x=>{ if(x>posisi) posisi = x; });
+    return { t:h.tanggal, v:posisi-dasar };
   });
   const maxV = Math.max(1, ...series.map(p=>p.v));
   ctx.strokeStyle='#ddd'; ctx.beginPath(); ctx.moveTo(pad,H-pad); ctx.lineTo(W-10,H-pad); ctx.stroke();
@@ -1853,7 +1872,7 @@ function renderLaporanHafalan(santri){
     </div>
     <div class="card">
       <div class="card-title">Total halaman ditambah per santri (periode terpilih)</div>
-      <p class="muted" style="margin:0 0 8px;font-size:12px">Total ditambah = jumlah halaman dari Setoran 1 yang berstatus Lancar pada periode ini.</p>
+      <p class="muted" style="margin:0 0 8px;font-size:12px">Total ditambah = kenaikan posisi halaman (dari Setoran 1 yang berstatus Lancar) pada periode ini.</p>
       <div class="table-wrap"><table><tr><th>Santri</th><th>Jumlah sesi</th><th>Total ditambah</th></tr>
       ${rows.map(r=>`<tr><td>${escapeHtml(r.s.nama)}</td><td>${r.items.length}</td><td><b>${r.tambah}</b> hal.</td></tr>`).join('')}
       </table></div>
