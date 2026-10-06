@@ -1665,7 +1665,10 @@ async function saveMahram(santriId){
 function downloadCard(filename){
   const card = document.querySelector('#printArea .id-card');
   if(!card){ alert('Kartu tidak ditemukan.'); return; }
-  html2canvas(card, {scale:3, backgroundColor:null}).then(canvas=>{
+  /* useCORS: foto santri/wali sekarang berupa URL Supabase Storage (domain lain), bukan data base64 lagi.
+     Tanpa useCORS, html2canvas melewati gambar lintas-domain sehingga foto kosong di file unduhan
+     (preview dan cetak tetap muncul karena dirender langsung oleh browser). */
+  html2canvas(card, {scale:3, backgroundColor:null, useCORS:true}).then(canvas=>{
     const link = document.createElement('a');
     link.download = filename + '.png';
     link.href = canvas.toDataURL('image/png');

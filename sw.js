@@ -1,4 +1,4 @@
-const CACHE = 'pondok-rq-v29-total-posisi';
+const CACHE = 'pondok-rq-v30-unduh-kartu-foto';
 const FILES = [
   './',
   './index.html',
